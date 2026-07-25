@@ -111,6 +111,6 @@ KSAVPlayer 没有 stall 采样,静默卡死协调器感知不到。给它加一�
 
 ## 6. 关联
 
-- `docs/PlaybackRecoveryCoordinator.md` — 协调器设计
+- `PlaybackRecoveryCoordinator` — 已上线的统一恢复协调器实现
 - `docs/PlaybackResilienceRoadmap.md` — 整体韧性栈
 - Bug1(横屏回前台变竖屏)修复:`DetailPlayerView.swift` `reassertLandscapeOrientation()` + scenePhase 记录 `wasLandscapeBeforeBackground`

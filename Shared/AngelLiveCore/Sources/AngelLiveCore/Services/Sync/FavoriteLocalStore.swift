@@ -2,7 +2,7 @@
 //  FavoriteLocalStore.swift
 //  AngelLiveCore
 //
-//  收藏的本地持久化(Phase ②,见 docs/SyncResilienceAndErrorModel.md)。
+//  收藏的本地持久化。
 //
 //  目的:让本地成为收藏的真相来源 ——
 //  - iOS / macOS:durable,断网 / 分流环境下离线可用;

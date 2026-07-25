@@ -6,7 +6,7 @@
 
 ## 问题反馈
 
-[常见问题](./docs/FAQ.md) | [Telegram](https://t.me/angelliveapp) | [提交issue](https://github.com/pcccccc/AngelLive/issues/new/choose)
+[Telegram](https://t.me/angelliveapp) | [提交 issue](https://github.com/pcccccc/AngelLive/issues/new/choose)
 
 ## 背景：
 

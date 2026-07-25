@@ -16,7 +16,6 @@ private enum CloudFavoriteFields {
     static let roomCover = "room_cover"
     static let userHeadImage = "user_head_img"
     static let liveType = "live_type"
-    static let liveState = "live_state"
     static let containerIdentifier = "iCloud.icloud.dev.igod.simplelive"
 }
 
@@ -31,7 +30,6 @@ public final class FavoriteService: NSObject {
         rec.setValue(liveModel.roomCover, forKey: CloudFavoriteFields.roomCover)
         rec.setValue(liveModel.userHeadImg, forKey: CloudFavoriteFields.userHeadImage)
         rec.setValue(liveModel.liveType.rawValue, forKey: CloudFavoriteFields.liveType)
-        rec.setValue(liveModel.liveState ?? "", forKey: CloudFavoriteFields.liveState)
         _ = try await CKContainer(identifier: CloudFavoriteFields.containerIdentifier).privateCloudDatabase.save(rec)
     }
     
@@ -52,7 +50,7 @@ public final class FavoriteService: NSObject {
                                   roomCover: record.value(forKey: CloudFavoriteFields.roomCover) as? String ?? "",
                                   userHeadImg: record.value(forKey: CloudFavoriteFields.userHeadImage) as? String ?? "",
                                   liveType: liveType,
-                                  liveState: record.value(forKey: CloudFavoriteFields.liveState) as? String ?? "",
+                                  liveState: nil,
                                   userId: record.value(forKey: CloudFavoriteFields.userId) as? String ?? "",
                                   roomId: record.value(forKey: CloudFavoriteFields.roomId) as? String ?? "",
                                   liveWatchedCount: nil))
@@ -79,7 +77,7 @@ public final class FavoriteService: NSObject {
                                   roomCover: record.value(forKey: CloudFavoriteFields.roomCover) as? String ?? "",
                                   userHeadImg: record.value(forKey: CloudFavoriteFields.userHeadImage) as? String ?? "",
                                   liveType: liveType,
-                                  liveState: record.value(forKey: CloudFavoriteFields.liveState) as? String ?? "",
+                                  liveState: nil,
                                   userId: userId,
                                   roomId: roomId,
                                   liveWatchedCount: nil)
@@ -191,7 +189,7 @@ public final class FavoriteService: NSObject {
     
     /// 将任意错误转成可展示文案(人话 + 建议 + 错误码)。
     ///
-    /// 实现已迁移到统一的 `SyncError`(见 docs/SyncResilienceAndErrorModel.md Phase ①):
+    /// 实现已迁移到统一的 `SyncError`:
     /// 三端所有 `formatErrorCode` 调用点因此自动升级为「原因 + 建议 + 错误码」。
     /// 保留此静态方法签名以兼容现有调用点;新代码建议直接用 `SyncError.from(_:)`。
     public static func formatErrorCode(error: Error) -> String {

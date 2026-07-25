@@ -5,7 +5,7 @@
 //  统一的同步错误模型:人话标题 + 错误码 + 可操作建议。
 //  三个同步域(收藏 / 登录凭证 / 订阅源)共享,三端只读不各写文案。
 //
-//  设计要点(见 docs/SyncResilienceAndErrorModel.md Phase ①):
+//  设计要点:
 //  - 必须带「错误码」:CKError 用 CKError.Code.rawValue(如 quotaExceeded=25),
 //    账号状态等非 CKError 用负数合成码并在展示时隐藏数字。
 //  - title 为人话,advice 为可操作建议(尤其针对分流/代理网络场景)。

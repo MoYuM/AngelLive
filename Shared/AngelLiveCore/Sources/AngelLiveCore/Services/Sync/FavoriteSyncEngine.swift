@@ -2,7 +2,7 @@
 //  FavoriteSyncEngine.swift
 //  AngelLiveCore
 //
-//  收藏的 CKSyncEngine 同步引擎(Phase③,见 docs/SyncResilienceAndErrorModel.md)。
+//  收藏的 CKSyncEngine 同步引擎。
 //
 //  分工:
 //  - 本地真相 = FavoriteLocalStore(Phase②)。
@@ -240,8 +240,6 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
         rec["room_cover"] = room.roomCover as CKRecordValue
         rec["user_head_img"] = room.userHeadImg as CKRecordValue
         rec["live_type"] = room.liveType.rawValue as CKRecordValue
-        // live_state 是高频、时效强、跨设备易乱序的本地状态,**不再上云**(见 docs/FavoriteIdentityWriteback.md §2.2)。
-        // 历史记录里残留的 live_state 字段保留不动,拉取时也不会用它覆盖本地状态(见 applyFetched)。
         // 身份元数据更新时间:多设备同时刷新不同 roomId 时按它做"新者胜"合并。
         rec["identity_updated_at"] = (room.identityUpdatedAt ?? Date()) as CKRecordValue
         return rec
@@ -255,7 +253,7 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
             roomCover: record["room_cover"] as? String ?? "",
             userHeadImg: record["user_head_img"] as? String ?? "",
             liveType: liveType,
-            liveState: record["live_state"] as? String ?? "",
+            liveState: nil,
             userId: record["user_id"] as? String ?? "",
             roomId: record["room_id"] as? String ?? "",
             liveWatchedCount: nil,
@@ -277,13 +275,13 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
                 let local = rooms[idx]
                 // 身份合并按 identity_updated_at「新者胜」:远端更新时间不晚于本地 → 保留本地身份
                 //(本地刚回写、远端是旧值的常见情况),否则取远端身份。无论哪边,
-                // liveState 永远保留本地(远端 live_state 不再用于覆盖,见 §2.2)。
+                // liveState 是本地刷新状态,不参与云端身份合并。
                 let remoteWins = (remote.identityUpdatedAt ?? .distantPast) > (local.identityUpdatedAt ?? .distantPast)
                 var merged = remoteWins ? remote : local
                 merged.liveState = local.liveState
                 rooms[idx] = merged
             } else {
-                // 新收藏:首次落地,远端身份直接采用;liveState 作为首帧快照(可空)。
+                // 新收藏先采用远端身份,liveState 由本地刷新流程补齐。
                 rooms.append(remote)
                 byKey[key] = rooms.count - 1
             }

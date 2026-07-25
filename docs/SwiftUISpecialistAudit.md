@@ -3,6 +3,8 @@
 Date: 2026-06-09
 Scope: static, read-only SwiftUI review for AngelLive using the `swiftui-specialist` guidance.
 
+Current status (2026-07-25): P1 model/card identity and the main dynamic list identities were fixed in `9d2fc8c` and `1ace1d3`; non-local `@State` cleanup and large-view extraction remain.
+
 ## Summary
 
 This audit focused on SwiftUI data flow, identity stability, view invalidation boundaries, and common list/focus pitfalls. No files were changed during the scan.
