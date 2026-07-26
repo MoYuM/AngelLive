@@ -65,37 +65,33 @@ F2 表明前台不自动 `play()`。若没有别处补 `play()`,就停在暂停�
 
 ## 4. 修复方案
 
-### 4.1 统一「硬重载」(三类根因的共同兜底,优先做)
+### 4.1 先做无副作用现场采集
 
-现状 reload 之所以救不回,是因为复用了 wedged 的 `playerCoordinator`/player 实例(F7/F8)。新增一个**真正销毁重建播放器层**的入口,让「回前台恢复」「手动 reload」「协调器 reloadPlayArgs」统一走它:
+当前实现已补齐以下 Debug 证据,但**不会自动调用 `play()`、`pause()`、`readNextFrame()` 或重建播放器**:
 
-- 在 `RoomInfoViewModel` 增加 `hardReloadPlayer()`:
-  1. 无条件走 `nil → url` 重建(即 F8 中「URL 相同」那条路径,但对所有情况生效),强制 `compatiblePlayerSurface` 从视图树移除再加入 → KSVideoPlayer onDisappear 触发,player 层真正释放后重建;
-  2. 重新拉 `getPlayArgs()`(token/线路可能已变)后再 set URL;
-  3. 调 `recoveryCoordinator.start()` 并重置监控状态(配合 4.4)。
-- `PlayerControlBridge.refreshPlayback`(`PlayerContainerView.swift:560`)、协调器 `reloadPlayArgs`(`PlaybackRecoveryAdapter.swift:70`)都改调 `hardReloadPlayer()`。
+- AngelLive 在 `willResignActive`、`didEnterBackground`、`willEnterForeground`、`didBecomeActive` 记录 `engineState`、`playerState`、`isPlaying`、进后台前播放意图、playhead、buffer、bytes、network speed、FPS 和播放 surface 状态;
+- 回前台 watchdog 在 `+1/+2/+3/+5s` 采样同一组状态,只读判定 A/B/C;
+- Debug KSPlayer 分支记录 `KSPlayerLayer` 实际收到的前后台事件、实际执行的 `player.enterBackground()` / `player.enterForeground()` / `play()` / `pause()`;
+- `MetalPlayView` 记录 `isPaused`、后台标记、display link 状态、渲染路径和视图/Drawable 几何信息;
+- 回前台后第一次真正进入 `CAMetalLayer.nextDrawable()` 时记录成功,或记录 `nextDrawable` 不可用;不会为了探测而额外调用 `nextDrawable()`;
+- iOS Debug scheme 已打开 Metal API Validation 和 GPU Frame Capture。真机卡住时使用 Xcode 的 Capture GPU Frame,不能用 FPS 单独推断 Drawable。
 
-> 仅此一项就能修掉「reload 无效、只能退房间」——因为它把「退房间才会做的重建」搬到了 reload 路径。
+KSPlayer 诊断分支位于本机相邻路径 `/Users/pangchong/Desktop/Git/KSPlayer`,分支 `codex/foreground-diagnostics`;远程依赖没有这些埋点时,AngelLive 侧日志仍可用,但缺少内部 `enterForeground`/Drawable 证据。
 
-### 4.2 回前台主动恢复(补 F2/F3 的缺口)
+### 4.2 按证据修复,不预设是 KSPlayer
 
-在 `PlayerContainerView` 的 `didBecomeActive`(`:150-164`,KSPlayer 分支)加入:
-- 若回前台后**短时间内未恢复播放**(根据 §3 判定:state 仍 `.paused` 或画面不前进),直接 `viewModel.hardReloadPlayer()`;
-- 若 KSPlayer 内部重连未恢复，直播场景不要长期停留在旧位置，直接硬重载到直播最新位置。
+- **C 类:暂停未恢复** — 只有在日志确认「进后台前在播、回前台后 `.paused`、没有实际 `play()`」时,在 AngelLive 生命周期层对原本在播的会话补一次幂等 `play()`。用户原本暂停的会话不能自动播放。
+- **A 类:渲染循环/Drawable** — 只有在 playhead 或音频仍推进、FPS 为 0,并且 KSPlayer 日志/GPU Frame Capture 确认 display link 或 `nextDrawable` 异常时,才修改 KSPlayer 的 `MetalPlayView`/Metal 渲染生命周期。
+- **B 类:直播管线** — 只有在 playhead 停止、buffer 耗尽并且日志确认取流、demux 或 reconnect 断供时,才修 AngelLive 取流/重连策略或 KSPlayer 管线;不能仅凭“画面卡住”就重建。
 
-### 4.3 HLS/KSAVPlayer 盲区兜底(补 F6)
+### 4.3 播放器重建的边界
 
-KSAVPlayer 没有 stall 采样,静默卡死协调器感知不到。给它加一个**前台后兜底计时**:回前台后 N 秒(如 5s)内若 `playhead` 不推进且未在播 → `hardReloadPlayer()`。可放在 `PlaybackRecoveryAdapter` 的采样层,或 View 层一个轻量 watchdog。
+`hardReloadPlayer()` 不作为自动回前台策略,也不作为 A/B/C 的默认判定结果。只有以下两种情况允许使用:
 
-### 4.4 reload 后重新武装监控(修 F9)
+1. 用户明确点击“重新加载”或确认恢复;
+2. 有运行时证据证明当前 player 实例不可恢复,且 `play()`、渲染恢复、管线重连均已失败。
 
-`hardReloadPlayer()` 内显式重置协调器会话:要么给协调器加 `rearm()`(把 `monitoring=true`、`attempts=0`、`phase=.healthy` 并重启 driver),要么 reload 时用一个带版本号的 streamKey 让 `applyEpisode` 不再 early-return。避免「卡死熔断后,手动 reload 也唤不醒监控」。
-
-### 4.5 (若 §3 判定为 A)渲染层专项
-
-- 确认后台确无 GPU 提交(F4 路径在 `isPaused=true` 时不调度,验证之);
-- 回前台强制重新取 drawable / 重绘一帧(`readNextFrame()` 已存在,`MetalPlayView.swift:244`);
-- 若仍 wedged,4.1 的硬重载会重建整个渲染层兜底。
+即使需要重建,也应记录触发原因、旧实例状态和新实例首帧结果,避免把重建当成根因修复。
 
 ---
 

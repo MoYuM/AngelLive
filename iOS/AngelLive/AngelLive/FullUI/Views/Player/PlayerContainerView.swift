@@ -9,6 +9,7 @@ import SwiftUI
 import AngelLiveCore
 import AngelLiveDependencies
 import UIKit
+import QuartzCore
 
 // MARK: - Preference Key for Player Height
 
@@ -97,6 +98,8 @@ struct PlayerContentView: View {
     @State private var foregroundDiagnosticTask: Task<Void, Never>?
     /// 进后台时刻,回前台时据此算后台时长(卡死多与后台停留长短相关)。
     @State private var lastResignActiveAt: Date?
+    /// 进后台前的播放意图,用于区分 C 类自动暂停与用户本来就暂停。
+    @State private var wasPlayingBeforeBackground: Bool?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -135,13 +138,11 @@ struct PlayerContentView: View {
         }
         .edgesIgnoringSafeArea(isVerticalLiveMode ? .all : [])
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
-            Logger.debug(
-                "[PlayerFlow] willResignActive, kernel=\(viewModel.selectedPlayerKernel.rawValue), useKS=\(useKSPlayer), url=\(compactURL(viewModel.currentPlayURL))",
-                category: .player
-            )
             // 记录进后台时刻,供回前台 watchdog 算后台时长。
             lastResignActiveAt = Date()
             if useKSPlayer {
+                wasPlayingBeforeBackground = playerCoordinator.playerLayer?.player.isPlaying ?? playerCoordinator.state.isPlaying
+                logForegroundLifecycleSnapshot(event: "willResignActive")
                 // 进入后台时自动开启画中画（每次读取最新设置值）
                 if PlayerSettingModel().enableAutoPiPOnBackground,
                    ownsGlobalCapability(.pictureInPicture) {
@@ -151,15 +152,24 @@ struct PlayerContentView: View {
                     }
                 }
             } else {
+                Logger.debug(
+                    "[PlayerFlow] willResignActive kernel=\(viewModel.selectedPlayerKernel.rawValue), useKS=false, url=\(compactURL(viewModel.currentPlayURL))",
+                    category: .player
+                )
                 vlcPlaybackController.enterBackground()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            guard useKSPlayer else { return }
+            logForegroundLifecycleSnapshot(event: "didEnterBackground")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            guard useKSPlayer else { return }
+            logForegroundLifecycleSnapshot(event: "willEnterForeground")
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            Logger.debug(
-                "[PlayerFlow] didBecomeActive, kernel=\(viewModel.selectedPlayerKernel.rawValue), useKS=\(useKSPlayer), url=\(compactURL(viewModel.currentPlayURL))",
-                category: .player
-            )
             if useKSPlayer {
+                logForegroundLifecycleSnapshot(event: "didBecomeActive")
                 // 返回前台时自动关闭画中画
                 if let playerLayer = playerCoordinator.playerLayer as? KSComplexPlayerLayer,
                    playerLayer.isPictureInPictureActive {
@@ -701,6 +711,36 @@ struct PlayerContentView: View {
     }
 
     #if canImport(KSPlayer)
+    @MainActor
+    private func logForegroundLifecycleSnapshot(event: String) {
+        guard let player = playerCoordinator.playerLayer?.player else {
+            Logger.debug(
+                "[PlayerFlow] lifecycle event=\(event) player=nil intendedPlaying=\(String(describing: wasPlayingBeforeBackground))",
+                category: .player
+            )
+            return
+        }
+
+        let info = player.dynamicInfo
+        let head = player.currentPlaybackTime
+        let buffered = max(0, player.playableTime - head)
+        var surface = "view=\(type(of: player.view)) windowAttached=\(player.view.window != nil) hidden=\(player.view.isHidden)"
+        if let metalView = player.view as? MetalPlayView,
+           let metalLayer = metalView.drawable as? CAMetalLayer {
+            surface += " metalDrawableSize=\(metalLayer.drawableSize) " +
+                "metalBounds=\(metalLayer.bounds) metalSuperlayerAttached=\(metalLayer.superlayer != nil)"
+        }
+        Logger.info(
+            "[PlayerFlow] lifecycle event=\(event) " +
+                "engineState=\(viewModel.engineState) playerState=\(player.playbackState) " +
+                "isPlaying=\(player.isPlaying) intendedPlaying=\(String(describing: wasPlayingBeforeBackground)) " +
+                "playhead=\(String(format: "%.2f", head)) buffered=\(String(format: "%.2f", buffered))s " +
+                "bytes=\(info.bytesRead) net=\(Int64(info.networkSpeed))B/s fps=\(String(format: "%.1f", Double(info.displayFPS))) " +
+                "surface=\(surface)",
+            category: .player
+        )
+    }
+
     // MARK: - Bug2 回前台诊断 watchdog(纯只读现场抓取)
 
     /// 回前台后做一段有界采样(1/2/3/5s),把 §3 观察矩阵需要的信号
@@ -741,9 +781,6 @@ struct PlayerContentView: View {
             var lastFps = Double(player.dynamicInfo.displayFPS)
             var lastBuffered = baseBuffered
             var lastIsPlaying = player.isPlaying
-            // 渲染卡死(A 类)早检 + 自动恢复:fps≈0 但 playhead 仍推进 = Metal display link 卡死。
-            var wedgeStreak = 0
-            var didKick = false
             for gap in gaps {
                 try? await Task.sleep(nanoseconds: gap * 1_000_000_000)
                 if Task.isCancelled { return }
@@ -754,7 +791,6 @@ struct PlayerContentView: View {
                 let bytes = info.bytesRead
                 let fps = Double(info.displayFPS)
                 let buffered = max(0, p.playableTime - head)
-                let advancingNow = (head - lastPlayhead) > 0.3   // 音频/时钟仍推进
                 Logger.info(
                     "[PlayerFlow] FG-watch +\(elapsed)s state=\(viewModel.engineState) " +
                     "playing=\(p.isPlaying) Δplayhead=\(String(format: "%+.2f", head - lastPlayhead))s " +
@@ -764,19 +800,6 @@ struct PlayerContentView: View {
                     "buffered=\(String(format: "%.2f", buffered))s",
                     category: .player
                 )
-
-                // A 类渲染卡死自动恢复:连续 2 拍 fps≈0 且 playhead 仍推进 → Metal display link 卡死,
-                // 做一次 play→pause→play 翻转 isPaused(true→false),强制 CADisplayLink 重新触发踢活渲染。
-                // 一个回前台周期最多踢一次;不动网络/解码,仅渲染层。
-                if fps < 0.5 && advancingNow { wedgeStreak += 1 } else { wedgeStreak = 0 }
-                if wedgeStreak >= 2 && !didKick {
-                    didKick = true
-                    Logger.warning("[PlayerFlow] FG-watch 检测到渲染卡死(fps≈0 + playhead 进)→ play-pause-play 踢活", category: .player)
-                    playerCoordinator.playerLayer?.pause()
-                    try? await Task.sleep(nanoseconds: 120_000_000)
-                    if Task.isCancelled { return }
-                    playerCoordinator.playerLayer?.play()
-                }
 
                 lastPlayhead = head
                 lastBytes = bytes
@@ -793,7 +816,8 @@ struct PlayerContentView: View {
             let state = viewModel.engineState
             let paused: Bool = { if case .paused = state { return true }; return false }()
             let ctx = "playhead\(advanced ? "进" : "停") fps=\(String(format: "%.1f", lastFps)) " +
-                "buffered=\(String(format: "%.2f", lastBuffered))s state=\(state) kicked=\(didKick)"
+                "buffered=\(String(format: "%.2f", lastBuffered))s state=\(state) " +
+                "intendedPlaying=\(String(describing: wasPlayingBeforeBackground))"
 
             let verdict: String
             if advanced && fpsLive {
@@ -802,10 +826,10 @@ struct PlayerContentView: View {
                 // A 的典型形态:声音在走(playhead 推进)但画面定格(fps→0)。
                 verdict = "A 渲染层 wedged:音频在播但视频定格(playhead 进 / fps≈0)" +
                     " → 补 GPU Frame Capture 查 currentDrawable | \(ctx)"
-            } else if paused && !lastIsPlaying {
-                verdict = "C 纯暂停未恢复(回前台没补 play(),hardReload 或手动播放可救) | \(ctx)"
+            } else if paused && !lastIsPlaying && wasPlayingBeforeBackground == true {
+                verdict = "C 纯暂停未恢复(进后台前在播,回前台未恢复 play()) → 只补幂等 play(),禁止自动重建 | \(ctx)"
             } else if bufferDrained {
-                verdict = "B 管线饿死:playhead 卡 + 缓冲耗尽(网络/解复用断供,需 hardReload 重建) | \(ctx)"
+                verdict = "B 管线饿死:playhead 卡 + 缓冲耗尽(网络/解复用断供) → 先查取流/重连证据,禁止自动重建 | \(ctx)"
             } else {
                 // playhead 卡死但缓冲仍在 → demuxer 填了缓冲却出不来帧,渲染/时钟 wedge。
                 verdict = "A 渲染/时钟 wedged:playhead 卡但缓冲仍在(\(String(format: "%.1f", lastBuffered))s)" +
