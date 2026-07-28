@@ -20,6 +20,8 @@ struct DirectPlayerControlOverlay: View {
 
     /// 刷新回调（重新加载 URL）
     var onRefresh: (() -> Void)?
+    /// 可直接投屏的直链媒体才传入，用于打开独立的 DLNA 设备选择页。
+    var onDLNACast: (() -> Void)?
 
     @State private var autoHideTask: Task<Void, Never>?
     @State private var statusBarVM = StatusBarViewModel()
@@ -186,6 +188,19 @@ struct DirectPlayerControlOverlay: View {
                         statusBarContent
                     }
                     HStack(spacing: 16) {
+                        if let onDLNACast {
+                            Button {
+                                onDLNACast()
+                            } label: {
+                                Image(systemName: "tv")
+                                    .frame(width: 30, height: 30)
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("DLNA 投屏")
+                        }
+
                         if bridge.supportsPictureInPicture {
                             Button {
                                 bridge.togglePictureInPicture()

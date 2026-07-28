@@ -25,7 +25,7 @@
 		<string>_angellive-cookie._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>用于在局域网内与 Apple TV 同步登录信息</string>
+	<string>用于发现局域网内的电视设备、连接设备并投送直播内容，也用于 Apple TV 登录信息同步</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

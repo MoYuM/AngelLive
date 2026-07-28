@@ -18,6 +18,7 @@ struct SettingsButton: View {
 
     @State private var showActionSheet = false
     @State private var showAirPlayPicker = false
+    @State private var showDLNAPicker = false
     @State private var showTimerPicker = false
     @State private var showPlayerSettings = false
     @State private var timerManager = TimerManager()
@@ -26,7 +27,7 @@ struct SettingsButton: View {
 
     /// 是否有任何弹窗展开
     private var isAnyPopupOpen: Bool {
-        showActionSheet || showAirPlayPicker || showTimerPicker || showPlayerSettings
+        showActionSheet || showAirPlayPicker || showDLNAPicker || showTimerPicker || showPlayerSettings
     }
 
     var body: some View {
@@ -66,8 +67,14 @@ struct SettingsButton: View {
 
             // 仅在 HLS 流时显示投屏选项（FLV 投屏只有音频）
             if viewModel.isHLSStream {
-                Button("投屏") {
+                Button("AirPlay 投屏") {
                     showAirPlayPicker = true
+                }
+            }
+
+            if viewModel.dlnaCastResource != nil {
+                Button("DLNA 投屏") {
+                    showDLNAPicker = true
                 }
             }
 
@@ -99,6 +106,14 @@ struct SettingsButton: View {
                 .presentationDetents([.height(200)])
                 .presentationDragIndicator(.visible)
                 .tint(.primary)
+        }
+        .sheet(isPresented: $showDLNAPicker) {
+            if let resource = viewModel.dlnaCastResource {
+                DLNADevicePickerSheet(resource: resource)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .tint(.primary)
+            }
         }
         .sheet(isPresented: $showTimerPicker) {
             TimerPickerView { minutes in

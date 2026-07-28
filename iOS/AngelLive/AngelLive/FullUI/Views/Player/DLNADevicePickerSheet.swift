@@ -1,0 +1,349 @@
+import SwiftUI
+import Observation
+import AngelLiveCore
+import AngelLiveDependencies
+
+enum DLNACastSessionState: Equatable {
+    case idle
+    case discovering
+    case ready
+    case settingURI
+    case playing
+    case stopping
+    case failed(String)
+
+    var isBusy: Bool {
+        switch self {
+        case .discovering, .settingURI, .stopping:
+            return true
+        case .idle, .ready, .playing, .failed:
+            return false
+        }
+    }
+}
+
+@Observable
+@MainActor
+final class DLNACastCoordinator {
+    var devices: [DLNADevice] = []
+    var state: DLNACastSessionState = .idle
+    var activeDevice: DLNADevice?
+    /// Last state reported by AVTransport (for example PLAYING or PAUSED_PLAYBACK).
+    var remoteTransportState: String?
+
+    private let service: DLNAService
+    private let transport: DLNAAVTransportClient
+    private let pollInterval: TimeInterval
+    private var discoveryTask: Task<Void, Never>?
+    private var commandTask: Task<Void, Never>?
+    private var pollingTask: Task<Void, Never>?
+    private var discoveryID = UUID()
+    private var sessionID = UUID()
+
+    init(
+        service: DLNAService = DLNAService(),
+        transport: DLNAAVTransportClient = DLNAAVTransportClient(),
+        pollInterval: TimeInterval = 5.0
+    ) {
+        self.service = service
+        self.transport = transport
+        self.pollInterval = max(0.5, pollInterval)
+    }
+
+    func discover() {
+        discoveryTask?.cancel()
+        let discoveryID = UUID()
+        self.discoveryID = discoveryID
+        devices.removeAll(keepingCapacity: true)
+        state = .discovering
+        discoveryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let devices = try await service.discoverDevices()
+                try Task.checkCancellation()
+                guard self.discoveryID == discoveryID else { return }
+                self.devices = devices
+                self.state = self.activeDevice == nil ? .ready : .playing
+            } catch is CancellationError {
+                // The sheet was dismissed or a new scan was requested.
+            } catch {
+                guard self.discoveryID == discoveryID else { return }
+                self.state = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func cast(resource: DLNAMediaResource, to device: DLNADevice) {
+        commandTask?.cancel()
+        pollingTask?.cancel()
+        pollingTask = nil
+        remoteTransportState = nil
+        let sessionID = UUID()
+        self.sessionID = sessionID
+        state = .settingURI
+        commandTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                if let oldDevice = activeDevice, oldDevice.id != device.id {
+                    try? await transport.stop(device: oldDevice)
+                }
+                guard self.sessionID == sessionID else { return }
+                activeDevice = nil
+                try await transport.setAVTransportURI(device: device, resource: resource)
+                try Task.checkCancellation()
+                try await transport.play(device: device)
+                try Task.checkCancellation()
+                guard self.sessionID == sessionID else { return }
+                activeDevice = device
+                remoteTransportState = "PLAYING"
+                state = .playing
+                startTransportPolling(for: device, sessionID: sessionID)
+            } catch is CancellationError {
+                guard self.sessionID == sessionID else { return }
+                state = .ready
+            } catch {
+                guard self.sessionID == sessionID else { return }
+                activeDevice = nil
+                remoteTransportState = nil
+                state = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func stopCasting() {
+        guard let device = activeDevice else {
+            pollingTask?.cancel()
+            pollingTask = nil
+            remoteTransportState = nil
+            state = .ready
+            return
+        }
+        commandTask?.cancel()
+        pollingTask?.cancel()
+        pollingTask = nil
+        remoteTransportState = nil
+        let sessionID = UUID()
+        self.sessionID = sessionID
+        state = .stopping
+        commandTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.sessionID == sessionID {
+                    activeDevice = nil
+                    if case .stopping = state { state = .ready }
+                }
+            }
+            do {
+                try await transport.stop(device: device)
+            } catch {
+                guard self.sessionID == sessionID else { return }
+                state = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func cancel() {
+        discoveryID = UUID()
+        sessionID = UUID()
+        discoveryTask?.cancel()
+        commandTask?.cancel()
+        pollingTask?.cancel()
+        pollingTask = nil
+        remoteTransportState = nil
+        service.stopDiscovery()
+        discoveryTask = nil
+        commandTask = nil
+    }
+
+    func recoverFromFailure() {
+        if devices.isEmpty {
+            discover()
+        } else {
+            state = activeDevice == nil ? .ready : .playing
+        }
+    }
+
+    private func startTransportPolling(for device: DLNADevice, sessionID: UUID) {
+        pollingTask?.cancel()
+        let nanoseconds = UInt64(pollInterval * 1_000_000_000)
+        pollingTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } catch {
+                    return
+                }
+
+                guard !Task.isCancelled,
+                      self.sessionID == sessionID,
+                      self.activeDevice?.id == device.id else { return }
+
+                do {
+                    let state = try await self.transport.transportState(device: device)
+                    guard !Task.isCancelled,
+                          self.sessionID == sessionID,
+                          self.activeDevice?.id == device.id else { return }
+                    self.applyRemoteTransportState(state)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard self.sessionID == sessionID else { return }
+                    self.pollingTask = nil
+                    self.activeDevice = nil
+                    self.remoteTransportState = nil
+                    self.state = .failed(error.localizedDescription)
+                    return
+                }
+            }
+        }
+    }
+
+    private func applyRemoteTransportState(_ value: String) {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalized.isEmpty else { return }
+        remoteTransportState = normalized
+
+        // A renderer can stop playback without the phone sending Stop (for example
+        // when a live stream ends), so release the session when it reports no media.
+        if normalized == "STOPPED" || normalized == "NO_MEDIA_PRESENT" {
+            pollingTask?.cancel()
+            pollingTask = nil
+            activeDevice = nil
+            remoteTransportState = nil
+            state = .ready
+        }
+    }
+
+    var remoteTransportStateLabel: String? {
+        guard let remoteTransportState else { return nil }
+        switch remoteTransportState {
+        case "PLAYING": return "正在播放"
+        case "PAUSED_PLAYBACK": return "已暂停"
+        case "TRANSITIONING": return "正在切换"
+        case "STOPPED", "NO_MEDIA_PRESENT": return "已停止"
+        default: return remoteTransportState
+        }
+    }
+}
+
+struct DLNADevicePickerSheet: View {
+    let resource: DLNAMediaResource
+    @State private var coordinator: DLNACastCoordinator
+    @Environment(\.dismiss) private var dismiss
+
+    init(resource: DLNAMediaResource) {
+        self.resource = resource
+        _coordinator = State(initialValue: DLNACastCoordinator())
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if coordinator.devices.isEmpty && coordinator.state == .discovering {
+                    ProgressView("正在搜索局域网设备…")
+                } else if case .failed(let message) = coordinator.state {
+                    ContentUnavailableView {
+                        Label(
+                            coordinator.devices.isEmpty ? "无法发现设备" : "投屏失败",
+                            systemImage: "wifi.exclamationmark"
+                        )
+                    } description: {
+                        Text(message)
+                    } actions: {
+                        Button(coordinator.devices.isEmpty ? "重新搜索" : "选择其他设备") {
+                            coordinator.recoverFromFailure()
+                        }
+                    }
+                } else if coordinator.devices.isEmpty {
+                    ContentUnavailableView {
+                        Label("没有找到 DLNA 设备", systemImage: "tv")
+                    } description: {
+                        Text("请确认手机和电视连接到同一个 Wi‑Fi，并在设置中允许 AngelLive 访问本地网络。")
+                    } actions: {
+                        Button("重新搜索") { coordinator.discover() }
+                    }
+                } else {
+                    deviceList
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("DLNA 投屏")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        coordinator.discover()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(coordinator.state.isBusy)
+                    .accessibilityLabel("重新搜索设备")
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if let activeDevice = coordinator.activeDevice {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("正在投送到 \(activeDevice.friendlyName)", systemImage: "tv.fill")
+                                .lineLimit(1)
+                            if let status = coordinator.remoteTransportStateLabel {
+                                Text(status)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Button("停止") { coordinator.stopCasting() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                    }
+                    .padding()
+                    .background(.thinMaterial)
+                }
+            }
+        }
+        .task { coordinator.discover() }
+        .onDisappear { coordinator.cancel() }
+    }
+
+    private var deviceList: some View {
+        List(coordinator.devices) { device in
+            Button {
+                coordinator.cast(resource: resource, to: device)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "tv")
+                        .font(.title3)
+                        .foregroundStyle(.tint)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(device.friendlyName)
+                            .foregroundStyle(.primary)
+                        if coordinator.activeDevice?.id == device.id {
+                            Text(coordinator.remoteTransportStateLabel ?? "正在播放")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if coordinator.activeDevice?.id == device.id {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(coordinator.state.isBusy)
+        }
+        .listStyle(.insetGrouped)
+    }
+}

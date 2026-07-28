@@ -67,6 +67,32 @@ final class RoomInfoViewModel {
     private(set) var engineState: PlaybackEngineState = .initialized
     var isHLSStream = false  // 当前是否为 HLS 流（支持 AirPlay 投屏）
 
+    /// DLNA 接受电视可直接访问的媒体 URL，不复用 AirPlay 的 HLS 布尔值。
+    var dlnaCastResource: DLNAMediaResource? {
+        guard let url = currentPlayURL else {
+            return nil
+        }
+
+        let selection = RoomPlaybackResolver.selection(
+            in: currentRoomPlayArgs,
+            cdnIndex: currentCdnIndex,
+            qualityIndex: currentQualityIndex
+        )
+        let format = selection.map { RoomPlaybackResolver.streamFormat(for: $0.quality) } ?? .unknown
+        let isLive = selection?.quality.playbackHints?.isLive ?? (format != .hlsVod)
+        let result = CastCompatibilityEvaluator.resource(
+            url: url,
+            title: currentRoom.roomTitle,
+            streamFormat: format,
+            isLive: isLive,
+            headers: selection?.quality.headers,
+            userAgent: selection?.quality.userAgent,
+            // FLV 是显式开放的实验模式：即使源声明了播放 Header，也显示入口供设备实测。
+            allowsHeaderDependentSource: format == .flv
+        )
+        return try? result.get()
+    }
+
     var selectedPlayerKernel: PlayerKernel {
         PlayerKernelSupport.resolvedKernel(for: PlayerSettingModel().playerKernel)
     }

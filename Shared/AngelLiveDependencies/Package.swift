@@ -121,5 +121,13 @@ let package = Package(
                 .process("Resources")
             ]
         ),
+        .testTarget(
+            name: "AngelLiveDependenciesTests",
+            dependencies: ["AngelLiveDependencies", "AngelLiveCore"],
+            path: "Tests",
+            resources: [
+                .process("Fixtures")
+            ]
+        ),
     ]
 )

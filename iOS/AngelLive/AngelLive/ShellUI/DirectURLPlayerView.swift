@@ -32,6 +32,7 @@ struct DirectURLPlayerView: View {
     // 控制层状态
     @State private var isMaskShow = true
     @State private var isLocked = false
+    @State private var showDLNAPicker = false
     @State private var isPlaying = false
     @State private var playbackMachine = PlaybackStatusMachine()
     @State private var playbackStatus: PlaybackStatus = .loading
@@ -119,8 +120,19 @@ struct DirectURLPlayerView: View {
                 bridge: controlBridge,
                 onRefresh: {
                     refreshPlayback()
+                },
+                onDLNACast: dlnaCastResource == nil ? nil : {
+                    showDLNAPicker = true
                 }
             )
+        }
+        .sheet(isPresented: $showDLNAPicker) {
+            if let resource = dlnaCastResource {
+                DLNADevicePickerSheet(resource: resource)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .tint(.primary)
+            }
         }
         .statusBar(hidden: true)
         .persistentSystemOverlays(.hidden)
@@ -245,6 +257,14 @@ struct DirectURLPlayerView: View {
             return playbackStatus.isLoading
         }
         return vlcState.isBuffering && !hasVLCStartedPlayback
+    }
+
+    private var dlnaCastResource: DLNAMediaResource? {
+        try? CastCompatibilityEvaluator.resource(
+            url: url,
+            title: title,
+            streamFormat: .unknown
+        ).get()
     }
 
     // MARK: - Control Bridge

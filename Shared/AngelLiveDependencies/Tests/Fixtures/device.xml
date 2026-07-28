@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion><major>1</major><minor>0</minor></specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+    <friendlyName>Fixture Living Room TV</friendlyName>
+    <manufacturer>Fixture Electronics</manufacturer>
+    <UDN>uuid:fixture-tv-1</UDN>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
+        <controlURL>/upnp/control/rendering</controlURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <controlURL>/upnp/control/avtransport</controlURL>
+      </service>
+    </serviceList>
+  </device>
+</root>

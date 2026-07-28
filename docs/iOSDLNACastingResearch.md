@@ -1,12 +1,12 @@
 # iOS DLNA 投屏调研
 
-> 状态: 调研结论 · 待进入 PoC
-> 更新于: 2026-07-27
+> 状态: 第二阶段已完成 · 待真实设备验证
+> 更新于: 2026-07-28
 > 范围: AngelLive iOS 端直播 URL 投送到局域网 DLNA/UPnP MediaRenderer
 
 ## 0. 结论先行
 
-DLNA 可以接入 AngelLive，但它实现的是“把媒体 URL 交给电视，由电视自行拉流播放”，不是 iPhone 屏幕镜像。第一版应只承诺一小组可验证的直播源：公网可访问、无需额外请求头、电视支持的 HLS 或标准 MPEG-TS/MP4。
+DLNA 可以接入 AngelLive，但它实现的是“把媒体 URL 交给电视，由电视自行拉流播放”，不是 iPhone 屏幕镜像。第一版应只承诺一小组可验证的直播源：公网可访问、无需额外请求头、电视支持的 HLS 或标准 MPEG-TS/MP4。FLV 入口已开放用于设备实测，但属于实验性兼容格式，不代表普通电视一定支持。
 
 正式实现建议使用项目内的轻量 DLNA 模块，复用现有 `CocoaAsyncSocket` 做 SSDP，使用 `URLSession` 做设备描述和 SOAP HTTP 控制。`SwiftUPnP` 可用于 PoC 或作为协议参考，但不建议未经 fork 直接接入；其分支依赖会和 AngelLive 当前 SwiftPM 依赖产生解析和可复现性风险。
 
@@ -15,6 +15,8 @@ DLNA 可以接入 AngelLive，但它实现的是“把媒体 URL 交给电视，
 1. 先实现独立的 DLNA 设备列表和 `SetAVTransportURI`/`Play`/`Stop` PoC。
 2. 仅向兼容性评估通过的播放源显示 DLNA 入口。
 3. 用真实电视验证后，再决定是否把 DLNA 设备加入 `AVRoutePickerView` 的统一选择器。
+
+当前仓库已经按上述边界落地了第一版骨架：`AngelLiveCore` 提供媒体源兼容性门禁、SSDP/XML 解析和 DLNA 模型，`AngelLiveDependencies` 提供 SSDP 发现与 AVTransport SOAP 客户端，iOS 播放器设置中新增独立的 DLNA 设备选择页。第二阶段又补充了设备描述/SOAP fixture、`URLProtocol` HTTP mock，以及投屏成功后的 `GetTransportInfo` 低频轮询；超时、设备离线和 SOAP Fault 会进入可重试错误态，远端报告停止播放时会自动释放会话。当前允许公网 HTTP/HTTPS 的 HLS、FLV、MPEG-TS 或 MP4，其中 FLV 使用 `video/x-flv` 作为 `protocolInfo` MIME，并明确作为实验性能力；真实电视兼容性、组播权限 profile 和短时效 URL 需要在真机上继续验证。
 
 ## 1. 与现有代码的关系
 
@@ -47,7 +49,7 @@ sequenceDiagram
     TV-->>App: serviceList / AVTransport controlURL
     App->>TV: SOAP SetAVTransportURI
     App->>TV: SOAP Play
-    TV->>CDN: GET HLS/TS/MP4 URL
+    TV->>CDN: GET HLS/FLV/TS/MP4 URL
     CDN-->>TV: 媒体数据和分片
     App->>TV: 可选状态轮询 GetTransportInfo
 ```
@@ -118,7 +120,7 @@ DLNA 的关键区别是：电视会以自己的 HTTP 客户端拉取 URL。播�
 | 公网 HLS，无 Header/Cookie，标准 HTTPS | P0 | 电视固件可能不支持 HLS 或只支持单一 variant |
 | 公网 MPEG-TS/MP4，无 Header/Cookie | P0 | 兼容性通常优于 HLS，但直播源不一定提供 |
 | 需要 User-Agent/Referer/Cookie | 暂不承诺 | SOAP 的 `CurrentURI` 不能携带播放器请求头；电视可能返回 401/403 |
-| FLV | 不建议 | DLNA 电视通常不支持 FLV |
+| FLV | 实验性 | 已允许投送并使用 `video/x-flv`；即使源声明 Header 也显示入口，但 DLNA 不会转发 Header，最终能否播放由 CDN 和接收端决定 |
 | LL-HLS、特殊 CMAF、私有编码 | P2 | 不同电视实现差异很大 |
 | 手机本地代理/转码 | P2 | 后台限制、功耗、断线恢复和端口可达性复杂 |
 
@@ -209,15 +211,17 @@ DLNA 只传媒体，不传弹幕层。AngelLive 的弹幕、播放器叠加层�
 
 - 发现 `MediaRenderer` 并显示 friendly name。
 - 解析 `AVTransport:1` 的 control URL。
-- 对固定的公网 HLS/MP4 测试 URL 完成 SetURI、Play、Stop。
+- 对固定的公网 HLS/FLV/MP4 测试 URL 完成 SetURI、Play、Stop。
 - 记录设备名称、动作和错误类型，但对 URL query/token 做脱敏。
 
 ### Phase 2: 播放器接入
 
 - 从 `RoomInfoViewModel` 生成 `DLNAMediaResource`。
-- 新增兼容性 gate：有必须 Header、FLV、URL 不可公开访问时不显示 DLNA 或给出明确原因。
+- 新增兼容性 gate：有必须 Header、未知格式、URL 不可公开访问时不显示 DLNA 或给出明确原因；FLV 作为实验格式始终允许进入投屏流程，即使声明了 Header。
 - 加入设备选择 sheet、当前设备标识、停止投屏和切换设备。
 - 本地播放和远程播放状态分开，避免远端状态影响现有播放恢复协调器。
+- 投屏成功后每 5 秒轮询 `GetTransportInfo`；`PLAYING`、`PAUSED_PLAYBACK`、`TRANSITIONING` 显示在设备状态中，`STOPPED`/`NO_MEDIA_PRESENT` 自动结束会话。
+- 轮询遇到超时、断网或 SOAP Fault 时取消任务并进入可重试错误态，不让旧设备任务覆盖新设备状态。
 
 ### Phase 3: 稳定性和设备矩阵
 
@@ -242,14 +246,15 @@ DLNA 只传媒体，不传弹幕层。AngelLive 的弹幕、播放器叠加层�
 
 ### 播放源
 
-- 无 Header 的公开 HLS/MP4 能在至少两种真实电视上播放。
-- 需要 Cookie/Referer 的 URL 不进入 DLNA 播放流程。
-- FLV、不可访问 URL 和过期 token 有明确的不可用原因。
+- 无 Header 的公开 HLS/MP4 能在至少两种真实电视上播放；FLV 单独记录每台接收端的支持情况。
+- 除显式实验模式的 FLV 外，需要 Cookie/Referer 的 URL 不进入 DLNA 播放流程；FLV 入口可见不代表接收端能复现这些 Header。
+- 不可访问 URL、未知格式和过期 token 有明确的不可用原因；FLV 若被接收端拒绝，应展示设备返回的错误。
 - 远端播放不会带上 iPhone 的弹幕或播放器 UI，这是预期行为。
 
 ### 工程质量
 
 - SSDP/SOAP parser 有离线单测。
+- 设备描述、SOAP 成功响应、SOAP Fault、HTTP 超时和设备离线均有 fixture/mock 覆盖。
 - UDP/HTTP 任务可取消，不阻塞主线程。
 - 日志不暴露 Cookie、完整 token 或未脱敏的私有播放地址。
 - 无网络切换时的假成功状态；连接错误进入可恢复状态。
@@ -271,4 +276,3 @@ DLNA 只传媒体，不传弹幕层。AngelLive 的弹幕、播放器叠加层�
 - [SwiftUPnP](https://github.com/katoemba/SwiftUPnP)
 - [Connect SDK iOS](https://github.com/ConnectSDK/Connect-SDK-iOS)
 - [UPnP Device Architecture](https://openconnectivity.org/developer/specifications/upnp-resources/upnp/)
-
