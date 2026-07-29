@@ -50,13 +50,24 @@ public struct DLNAMediaResource: Sendable, Equatable {
     public let title: String
     public let mimeType: String
     public let isLive: Bool
+    /// Headers the phone-side proxy must add when the renderer fetches this resource.
+    public let requestHeaders: [String: String]
 
-    public init(url: URL, title: String, mimeType: String, isLive: Bool = true) {
+    public init(
+        url: URL,
+        title: String,
+        mimeType: String,
+        isLive: Bool = true,
+        requestHeaders: [String: String] = [:]
+    ) {
         self.url = url
         self.title = title
         self.mimeType = mimeType
         self.isLive = isLive
+        self.requestHeaders = requestHeaders
     }
+
+    public var requiresLocalProxy: Bool { !requestHeaders.isEmpty }
 }
 
 public enum DLNACastCompatibility: Error, Equatable, Sendable {
@@ -193,7 +204,28 @@ public enum CastCompatibilityEvaluator {
         case .dash:
             return .failure(.unsupportedStreamFormat)
         }
-        return .success(DLNAMediaResource(url: url, title: title, mimeType: mimeType, isLive: isLive))
+        var proxyHeaders = headers ?? [:]
+        if let userAgent {
+            let trimmed = userAgent.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasUserAgent = proxyHeaders.keys.contains {
+                $0.caseInsensitiveCompare("user-agent") == .orderedSame
+            }
+            if !trimmed.isEmpty, !hasUserAgent {
+                proxyHeaders["User-Agent"] = trimmed
+            }
+        }
+        proxyHeaders = proxyHeaders.filter {
+            !$0.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        return .success(DLNAMediaResource(
+            url: url,
+            title: title,
+            mimeType: mimeType,
+            isLive: isLive,
+            requestHeaders: proxyHeaders
+        ))
     }
 
     private static func expiryDate(in url: URL) -> Date? {

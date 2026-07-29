@@ -87,8 +87,8 @@ final class RoomInfoViewModel {
             isLive: isLive,
             headers: selection?.quality.headers,
             userAgent: selection?.quality.userAgent,
-            // FLV 是显式开放的实验模式：即使源声明了播放 Header，也显示入口供设备实测。
-            allowsHeaderDependentSource: format == .flv
+            // Header-dependent sources are served through the phone-side DLNA proxy.
+            allowsHeaderDependentSource: true
         )
         return try? result.get()
     }

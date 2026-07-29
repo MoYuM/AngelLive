@@ -87,6 +87,22 @@ struct DLNACastingTests {
             allowsHeaderDependentSource: true
         ).get()
         #expect(resource?.mimeType == "video/x-flv")
+        #expect(resource?.requestHeaders["Referer"] == "https://www.example.com")
+        #expect(resource?.requestHeaders["User-Agent"] == "Mozilla/5.0")
+    }
+
+    @Test("custom user agent is retained for the phone-side DLNA proxy")
+    func customUserAgentIsRetainedForProxy() throws {
+        let resource = try CastCompatibilityEvaluator.resource(
+            url: URL(string: "https://cdn.example.com/live.m3u8"),
+            title: "HLS Stream",
+            streamFormat: .hlsLive,
+            userAgent: "CustomTVUA/1.0",
+            allowsHeaderDependentSource: true
+        ).get()
+
+        #expect(resource.requiresLocalProxy)
+        #expect(resource.requestHeaders["User-Agent"] == "CustomTVUA/1.0")
     }
 
     @Test("DASH and non HTTP URLs are rejected")

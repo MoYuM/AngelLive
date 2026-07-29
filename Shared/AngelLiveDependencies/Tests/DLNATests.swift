@@ -107,6 +107,36 @@ struct DLNANetworkTests {
         }
     }
 
+    @Test("HLS proxy rewrites playlists, segments, and URI attributes")
+    func rewritesHLSResourcesThroughProxy() throws {
+        let playlist = """
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=1280000
+        low/index.m3u8
+        #EXT-X-KEY:METHOD=AES-128,URI="keys/live.key"
+        #EXT-X-MAP:URI="https://media.example.net/init.mp4"
+        segment0001.ts?token=abc
+        """
+        let baseURL = try #require(URL(string: "https://cdn.example.com/live/master.m3u8"))
+        let proxyBaseURL = try #require(URL(string: "http://192.168.1.20:49152"))
+
+        let rewritten = DLNAHLSPlaylistRewriter.rewrite(
+            data: Data(playlist.utf8),
+            baseURL: baseURL,
+            token: "session-token",
+            proxyURL: { origin, token, baseURL in
+                baseURL.appendingPathComponent(token).appendingPathComponent(origin.lastPathComponent)
+            },
+            proxyBaseURL: proxyBaseURL
+        )
+        let output = String(decoding: rewritten, as: UTF8.self)
+
+        #expect(output.contains("http://192.168.1.20:49152/session-token/index.m3u8"))
+        #expect(output.contains("URI=\"http://192.168.1.20:49152/session-token/live.key\""))
+        #expect(output.contains("URI=\"http://192.168.1.20:49152/session-token/init.mp4\""))
+        #expect(output.contains("http://192.168.1.20:49152/session-token/segment0001.ts"))
+    }
+
     private func makeSession(
         handler: @escaping (URLRequest) throws -> MockURLProtocol.Result
     ) -> URLSession {

@@ -33,20 +33,24 @@ final class DLNACastCoordinator {
 
     private let service: DLNAService
     private let transport: DLNAAVTransportClient
+    private let mediaProxy: DLNALocalMediaProxy
     private let pollInterval: TimeInterval
     private var discoveryTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var discoveryID = UUID()
     private var sessionID = UUID()
+    private var activeResource: DLNAMediaResource?
 
     init(
         service: DLNAService = DLNAService(),
         transport: DLNAAVTransportClient = DLNAAVTransportClient(),
+        mediaProxy: DLNALocalMediaProxy = .shared,
         pollInterval: TimeInterval = 5.0
     ) {
         self.service = service
         self.transport = transport
+        self.mediaProxy = mediaProxy
         self.pollInterval = max(0.5, pollInterval)
     }
 
@@ -83,26 +87,41 @@ final class DLNACastCoordinator {
         state = .settingURI
         commandTask = Task { [weak self] in
             guard let self else { return }
+            var candidateResource: DLNAMediaResource?
             do {
                 if let oldDevice = activeDevice, oldDevice.id != device.id {
                     try? await transport.stop(device: oldDevice)
                 }
+                if let activeResource {
+                    await mediaProxy.release(resource: activeResource)
+                    self.activeResource = nil
+                }
                 guard self.sessionID == sessionID else { return }
                 activeDevice = nil
-                try await transport.setAVTransportURI(device: device, resource: resource)
+                let preparedResource = try await mediaProxy.prepare(resource: resource)
+                candidateResource = preparedResource
+                try await transport.setAVTransportURI(device: device, resource: preparedResource)
                 try Task.checkCancellation()
                 try await transport.play(device: device)
                 try Task.checkCancellation()
-                guard self.sessionID == sessionID else { return }
+                guard self.sessionID == sessionID else {
+                    await mediaProxy.release(resource: preparedResource)
+                    return
+                }
+                activeResource = preparedResource
+                candidateResource = nil
                 activeDevice = device
                 remoteTransportState = "PLAYING"
                 state = .playing
                 startTransportPolling(for: device, sessionID: sessionID)
             } catch is CancellationError {
+                if let candidateResource { await mediaProxy.release(resource: candidateResource) }
                 guard self.sessionID == sessionID else { return }
                 state = .ready
             } catch {
+                if let candidateResource { await mediaProxy.release(resource: candidateResource) }
                 guard self.sessionID == sessionID else { return }
+                self.activeResource = nil
                 activeDevice = nil
                 remoteTransportState = nil
                 state = .failed(error.localizedDescription)
@@ -115,6 +134,8 @@ final class DLNACastCoordinator {
             pollingTask?.cancel()
             pollingTask = nil
             remoteTransportState = nil
+            if let activeResource { Task { await mediaProxy.release(resource: activeResource) } }
+            activeResource = nil
             state = .ready
             return
         }
@@ -130,6 +151,10 @@ final class DLNACastCoordinator {
             defer {
                 if self.sessionID == sessionID {
                     activeDevice = nil
+                    if let activeResource {
+                        Task { await mediaProxy.release(resource: activeResource) }
+                    }
+                    self.activeResource = nil
                     if case .stopping = state { state = .ready }
                 }
             }
@@ -190,6 +215,10 @@ final class DLNACastCoordinator {
                 } catch {
                     guard self.sessionID == sessionID else { return }
                     self.pollingTask = nil
+                    if let activeResource {
+                        Task { await mediaProxy.release(resource: activeResource) }
+                    }
+                    self.activeResource = nil
                     self.activeDevice = nil
                     self.remoteTransportState = nil
                     self.state = .failed(error.localizedDescription)
@@ -209,6 +238,8 @@ final class DLNACastCoordinator {
         if normalized == "STOPPED" || normalized == "NO_MEDIA_PRESENT" {
             pollingTask?.cancel()
             pollingTask = nil
+            if let activeResource { Task { await mediaProxy.release(resource: activeResource) } }
+            activeResource = nil
             activeDevice = nil
             remoteTransportState = nil
             state = .ready
