@@ -467,6 +467,10 @@ private struct MacDanmuSettingView: View {
             } header: {
                 Text("显示设置")
             }
+
+            Section("关键词屏蔽") {
+                DanmakuKeywordBlocklistForm(settings: danmuModel)
+            }
         }
         .listStyle(.inset)
         .navigationTitle("弹幕设置")

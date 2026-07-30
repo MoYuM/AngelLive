@@ -13,6 +13,7 @@ struct DanmuSettingMainView: View {
     
     @Environment(AppState.self) var appViewModel
     @FocusState var showDanmuView: Bool
+    @State private var showsKeywordBlocklist = false
     
     var body: some View {
         
@@ -31,6 +32,10 @@ struct DanmuSettingMainView: View {
                     .foregroundColor(.primary)
             }
                 .frame(height: 45)
+            Button("屏蔽关键词（\(appViewModel.danmuSettingsViewModel.blockedKeywords.count)）") {
+                showsKeywordBlocklist = true
+            }
+            .frame(height: 45)
             HStack {
                 Text("字体大小：")
                     .foregroundColor(.primary)
@@ -151,6 +156,71 @@ struct DanmuSettingMainView: View {
             .frame(height: 45)
             Spacer()
         }
+        .sheet(isPresented: $showsKeywordBlocklist) {
+            DanmakuKeywordBlocklistSheet(
+                settings: appViewModel.danmuSettingsViewModel,
+                isPresented: $showsKeywordBlocklist
+            )
+        }
+    }
+}
+
+private struct DanmakuKeywordBlocklistSheet: View {
+    @Bindable var settings: DanmuSettingModel
+    @Binding var isPresented: Bool
+    @State private var draft = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("新增关键词") {
+                    TextField("输入要屏蔽的关键词", text: $draft)
+                        .onSubmit(addKeyword)
+                    Button("添加", action: addKeyword)
+                        .disabled(!canAddKeyword)
+                }
+
+                Section("已屏蔽 \(settings.blockedKeywords.count) 个") {
+                    if settings.blockedKeywords.isEmpty {
+                        Text("命中关键词的弹幕不会显示在聊天或飞屏中")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(settings.blockedKeywords, id: \.self) { keyword in
+                            HStack {
+                                Text(keyword)
+                                Spacer()
+                                Button("删除", role: .destructive) {
+                                    settings.removeBlockedKeyword(keyword)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("关键词屏蔽")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { isPresented = false }
+                }
+            }
+        }
+    }
+
+    private var normalizedDraft: String? {
+        DanmuSettingModel.normalizedBlockedKeywords([draft]).first
+    }
+
+    private var canAddKeyword: Bool {
+        guard let normalizedDraft else { return false }
+        return !settings.blockedKeywords.contains {
+            $0.compare(normalizedDraft, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]) == .orderedSame
+        }
+    }
+
+    private func addKeyword() {
+        guard let normalizedDraft, canAddKeyword else { return }
+        settings.addBlockedKeyword(normalizedDraft)
+        draft = ""
     }
 }
 

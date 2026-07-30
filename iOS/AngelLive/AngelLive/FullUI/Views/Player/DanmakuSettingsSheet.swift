@@ -186,6 +186,29 @@ struct DanmakuSettingsSheet: View {
                         }
                     }
 
+                    settingSection(title: "关键词屏蔽") {
+                        NavigationLink {
+                            DanmakuKeywordBlocklistView(settings: viewModel.danmuSettings)
+                        } label: {
+                            HStack(spacing: AppConstants.Spacing.md) {
+                                Image(systemName: "text.badge.xmark")
+                                    .foregroundStyle(AppConstants.Colors.link)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("管理屏蔽关键词")
+                                        .foregroundStyle(AppConstants.Colors.primaryText)
+                                    Text("命中内容不会进入聊天或飞屏")
+                                        .font(.caption)
+                                        .foregroundStyle(AppConstants.Colors.secondaryText)
+                                }
+                                Spacer()
+                                Text("\(viewModel.danmuSettings.blockedKeywords.count)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(AppConstants.Colors.secondaryText)
+                            }
+                            .padding()
+                        }
+                    }
+
                     Spacer(minLength: AppConstants.Spacing.xl)
                 }
                 .padding()

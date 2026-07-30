@@ -22,6 +22,7 @@ public final class DanmuSettingModel {
     public static let globalDanmuAreaIndex = "SimpleLive.Setting.danmuAreaIndex"
     public static let globalDanmuFontSizeIndex = "SimpleLive.Setting.danmuFontSizeIndex"
     public static let globalDanmuSpeedIndex = "SimpleLive.Setting.danmuSpeedIndex"
+    public static let globalDanmuBlockedKeywords = "SimpleLive.Setting.danmuBlockedKeywords"
 
     public init() {}
 
@@ -151,6 +152,58 @@ public final class DanmuSettingModel {
             withMutation(keyPath: \.danmuSpeedIndex) {
                 UserDefaults.shared.set(newValue, forKey: DanmuSettingModel.globalDanmuSpeedIndex, synchronize: true)
             }
+        }
+    }
+
+    /// User-defined terms that are suppressed before they reach either danmaku surface.
+    public var blockedKeywords: [String] {
+        get {
+            access(keyPath: \.blockedKeywords)
+            let stored = UserDefaults.shared.value(forKey: DanmuSettingModel.globalDanmuBlockedKeywords) as? [String] ?? []
+            return Self.normalizedBlockedKeywords(stored)
+        }
+        set {
+            withMutation(keyPath: \.blockedKeywords) {
+                UserDefaults.shared.set(
+                    Self.normalizedBlockedKeywords(newValue),
+                    forKey: DanmuSettingModel.globalDanmuBlockedKeywords,
+                    synchronize: true
+                )
+            }
+        }
+    }
+
+    public func addBlockedKeyword(_ keyword: String) {
+        blockedKeywords = blockedKeywords + [keyword]
+    }
+
+    public func removeBlockedKeyword(_ keyword: String) {
+        blockedKeywords = blockedKeywords.filter { $0 != keyword }
+    }
+
+    public func shouldBlockDanmu(_ text: String) -> Bool {
+        Self.shouldBlockDanmu(text, keywords: blockedKeywords)
+    }
+
+    public static func normalizedBlockedKeywords(_ keywords: [String]) -> [String] {
+        var seen = Set<String>()
+        return keywords.compactMap { keyword in
+            let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let identity = trimmed.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            return seen.insert(identity).inserted ? trimmed : nil
+        }
+    }
+
+    public static func shouldBlockDanmu(_ text: String, keywords: [String]) -> Bool {
+        let normalizedKeywords = normalizedBlockedKeywords(keywords)
+        return normalizedKeywords.contains { keyword in
+            text.range(
+                of: keyword,
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                range: nil,
+                locale: .current
+            ) != nil
         }
     }
 

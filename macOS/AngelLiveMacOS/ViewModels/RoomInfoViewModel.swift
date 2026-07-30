@@ -674,6 +674,7 @@ final class RoomInfoViewModel {
 extension RoomInfoViewModel: WebSocketConnectionDelegate {
     func webSocketDidReceiveMessage(text: String, color: UInt32) { //旧版本
         Task { @MainActor in
+            guard !danmuSettings.shouldBlockDanmu(text) else { return }
             // 将弹幕消息添加到聊天列表（底部气泡）
             addDanmuMessage(text: text, userName: "")
 
@@ -719,6 +720,7 @@ extension RoomInfoViewModel: WebSocketConnectionDelegate {
 
     func webSocketDidReceiveMessage(text: String, nickname: String, color: UInt32) { // 新版本
         Task { @MainActor in
+            guard !danmuSettings.shouldBlockDanmu(text) else { return }
             // 将弹幕消息添加到聊天列表（底部气泡）
             addDanmuMessage(text: text, userName: nickname)
 

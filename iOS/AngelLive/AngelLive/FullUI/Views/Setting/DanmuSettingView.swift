@@ -128,6 +128,19 @@ struct DanmuSettingView: View {
             } header: {
                 Text("显示设置")
             }
+
+            Section("关键词屏蔽") {
+                NavigationLink {
+                    DanmakuKeywordBlocklistView(settings: danmuModel)
+                } label: {
+                    HStack {
+                        Label("管理屏蔽关键词", systemImage: "text.badge.xmark")
+                        Spacer()
+                        Text("\(danmuModel.blockedKeywords.count)")
+                            .foregroundStyle(AppConstants.Colors.secondaryText)
+                    }
+                }
+            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("弹幕")

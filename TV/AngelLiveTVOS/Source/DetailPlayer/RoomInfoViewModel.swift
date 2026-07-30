@@ -651,6 +651,7 @@ extension RoomInfoViewModel: WebSocketConnectionDelegate {
         // §6.2 经去突发调度器摊开发射(调度器 @MainActor,故包一层 Task)
         Task { @MainActor in
             let settings = appViewModel.danmuSettingsViewModel
+            guard !settings.shouldBlockDanmu(text) else { return }
             let showColorDanmu = settings.showColorDanmu
             let alpha = settings.danmuAlpha
             let font = CGFloat(settings.danmuFontSize)

@@ -93,6 +93,10 @@ struct DanmakuSettingsPanel: View {
                         viewModel.applyDanmuSettings()
                     }
                 }
+
+                Section("关键词屏蔽") {
+                    DanmakuKeywordBlocklistForm(settings: viewModel.danmuSettings)
+                }
             }
             .formStyle(.grouped)
         }
