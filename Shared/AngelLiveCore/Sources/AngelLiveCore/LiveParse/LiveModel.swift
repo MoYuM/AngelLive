@@ -272,7 +272,7 @@ public struct LiveType: RawRepresentable, Hashable, Codable, Sendable, Expressib
     public static let placeholder: LiveType = .init(rawValue: "__placeholder__")!
 }
 
-public enum LiveState: String, Codable {
+public enum LiveState: String, Codable, Sendable {
     case close = "0", //关播
          live = "1", //直播中
          video = "2", //录播、轮播

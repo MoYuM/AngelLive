@@ -33,7 +33,10 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
     private var engine: CKSyncEngine?
 
     /// 引擎从云端拉到变更后,回调上层在主线程刷新 roomList。
-    public var onRemoteChange: (@Sendable () async -> Void)?
+    /// 回调标 `@MainActor`:唯一的订阅方 `AppFavoriteModel` 是 nonisolated 类 + 逐方法
+    /// `@MainActor`(见该类注释:类级隔离会破坏 tvOS 的构造时机)。把闭包本身钉在主 actor 上,
+    /// 捕获的 `self` 就始终不离开主 actor,无需把非 Sendable 的它跨隔离域传递。
+    public var onRemoteChange: (@MainActor @Sendable () async -> Void)?
 
     private static let migrationDoneKey = "FavoriteSyncEngine.defaultZoneMigrationDone.v1"
 

@@ -65,7 +65,7 @@ public final class StreamBookmarkService {
 
         // 同步到 CloudKit
         do {
-            try await saveToCloud(bookmark)
+            try await Self.saveToCloud(bookmark)
             syncError = nil
         } catch {
             syncError = FavoriteService.formatErrorCode(error: error)
@@ -78,7 +78,7 @@ public final class StreamBookmarkService {
         saveToCache()
 
         do {
-            try await deleteFromCloud(bookmark)
+            try await Self.deleteFromCloud(bookmark)
             syncError = nil
         } catch {
             syncError = FavoriteService.formatErrorCode(error: error)
@@ -92,7 +92,7 @@ public final class StreamBookmarkService {
             saveToCache()
 
             do {
-                try await updateInCloud(bookmark)
+                try await Self.updateInCloud(bookmark)
                 syncError = nil
             } catch {
                 syncError = FavoriteService.formatErrorCode(error: error)
@@ -114,7 +114,7 @@ public final class StreamBookmarkService {
         defer { isLoading = false }
 
         do {
-            let cloudBookmarks = try await fetchAllFromCloud()
+            let cloudBookmarks = try await Self.fetchAllFromCloud()
             bookmarks = cloudBookmarks.sorted { $0.addedAt > $1.addedAt }
             saveToCache()
             syncError = nil
@@ -125,11 +125,13 @@ public final class StreamBookmarkService {
 
     // MARK: - CloudKit 操作
 
-    private var database: CKDatabase {
+    /// 每次现构造 CKContainer,不依赖任何实例状态,故与下面四个 I/O 方法一并声明为 static。
+    /// 这样 @MainActor 方法 await 它们时无需把非 Sendable 的 self 跨隔离域传递。
+    private static var database: CKDatabase {
         CKContainer(identifier: CloudStreamBookmarkFields.containerIdentifier).privateCloudDatabase
     }
 
-    private func saveToCloud(_ bookmark: StreamBookmark) async throws {
+    private static func saveToCloud(_ bookmark: StreamBookmark) async throws {
         let record = CKRecord(recordType: CloudStreamBookmarkFields.recordType)
         record.setValue(bookmark.id, forKey: CloudStreamBookmarkFields.bookmarkId)
         record.setValue(bookmark.title, forKey: CloudStreamBookmarkFields.title)
@@ -141,7 +143,7 @@ public final class StreamBookmarkService {
         _ = try await database.save(record)
     }
 
-    private func deleteFromCloud(_ bookmark: StreamBookmark) async throws {
+    private static func deleteFromCloud(_ bookmark: StreamBookmark) async throws {
         let predicate = NSPredicate(format: "%K = %@", CloudStreamBookmarkFields.bookmarkId, bookmark.id)
         let query = CKQuery(recordType: CloudStreamBookmarkFields.recordType, predicate: predicate)
         let results = try await database.records(matching: query)
@@ -150,13 +152,13 @@ public final class StreamBookmarkService {
         }
     }
 
-    private func updateInCloud(_ bookmark: StreamBookmark) async throws {
+    private static func updateInCloud(_ bookmark: StreamBookmark) async throws {
         // 先删除旧记录，再保存新记录
         try await deleteFromCloud(bookmark)
         try await saveToCloud(bookmark)
     }
 
-    private func fetchAllFromCloud() async throws -> [StreamBookmark] {
+    private static func fetchAllFromCloud() async throws -> [StreamBookmark] {
         let query = CKQuery(recordType: CloudStreamBookmarkFields.recordType, predicate: NSPredicate(value: true))
         let results = try await database.records(matching: query, resultsLimit: 99999)
 

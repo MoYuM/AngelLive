@@ -37,6 +37,12 @@ public struct FavoriteLiveSectionModel: Identifiable, Sendable {
 public actor FavoriteStateModel {
 
     var currentProgress: (String, String, String, Int, Int) = ("", "", "", 0, 0)
+
+    /// 供非隔离闭包(如 `withTaskGroup` 的 body)跨 actor 边界更新进度。
+    /// actor 属性无法用 `await self.prop = x` 直接赋值,故提供此方法。
+    func setCurrentProgress(_ value: (String, String, String, Int, Int)) {
+        currentProgress = value
+    }
     private var isSyncing = false  // 添加同步标志
 
     public init() {}
@@ -90,7 +96,11 @@ public actor FavoriteStateModel {
                 throw error
             }
         }
-        let cloudFetchedCount = roomList.count
+        // 至此 roomList 不再变更。下面的 task group 子闭包并发执行,
+        // 捕获可变 var 会被判为数据竞争,故固化为不可变快照。
+        let favorites = roomList
+
+        let cloudFetchedCount = favorites.count
         await MainActor.run {
             PluginConsoleService.shared.updateRequest(
                 id: consoleEntryId,
@@ -99,7 +109,7 @@ public actor FavoriteStateModel {
         }
 
         var platformFavoriteCounts: [LiveType: Int] = [:]
-        for room in roomList {
+        for room in favorites {
             platformFavoriteCounts[room.liveType, default: 0] += 1
         }
 
@@ -110,11 +120,18 @@ public actor FavoriteStateModel {
         var platformStats: [LiveType: (count: Int, totalTime: Double, success: Int, failure: Int)] = [:]
         let statusSyncStart = CFAbsoluteTimeGetCurrent()
 
+        // 进度回写做成独立的 Sendable 闭包:actor 的 self 本身是 Sendable,
+        // 这样下面的 group body 捕获的是这个闭包而非 actor 隔离的 self,
+        // 从而可以作为 `sending` 参数传出去,同时保留逐条流式更新进度的行为。
+        let reportProgress: @Sendable ((String, String, String, Int, Int)) async -> Void = { [weak self] value in
+            await self?.setCurrentProgress(value)
+        }
+
         await withTaskGroup(of: (Int, LiveModel?, String, String, String, LiveType, Double).self) { group in
-            for (index, liveModel) in roomList.enumerated() {
+            for (index, liveModel) in favorites.enumerated() {
                 group.addTask {
                     let platformName = LiveParseTools.getLivePlatformName(liveModel.liveType)
-                    favoriteSyncLog("[\(index + 1)/\(roomList.count)] 开始查询 \(platformName) - \(liveModel.userName) (roomId=\(liveModel.roomId), userId=\(liveModel.userId))")
+                    favoriteSyncLog("[\(index + 1)/\(favorites.count)] 开始查询 \(platformName) - \(liveModel.userName) (roomId=\(liveModel.roomId), userId=\(liveModel.userId))")
                     let taskStart = CFAbsoluteTimeGetCurrent()
                     do {
                         let dataReq = try await ApiManager.fetchLastestLiveInfoFast(liveModel: liveModel)
@@ -128,7 +145,7 @@ public actor FavoriteStateModel {
                         }
                     } catch {
                         let duration = CFAbsoluteTimeGetCurrent() - taskStart
-                        favoriteSyncLog("[\(index + 1)/\(roomList.count)] 查询失败 \(platformName) - \(liveModel.userName) 耗时 \(formatSeconds(duration))s 错误: \(error)")
+                        favoriteSyncLog("[\(index + 1)/\(favorites.count)] 查询失败 \(platformName) - \(liveModel.userName) 耗时 \(formatSeconds(duration))s 错误: \(error)")
                         var errorModel = liveModel
                         errorModel.liveState = PlatformHostBehavior.liveStateOnFavoriteRefreshFailure(for: errorModel.liveType).rawValue
                         return (index, errorModel, liveModel.userName, LiveParseTools.getLivePlatformName(liveModel.liveType), "失败", liveModel.liveType, duration)
@@ -136,9 +153,9 @@ public actor FavoriteStateModel {
                 }
             }
 
-            var resultModels = [LiveModel?](repeating: nil, count: roomList.count)
+            var resultModels = [LiveModel?](repeating: nil, count: favorites.count)
             for await (index, model, userName, platformName, status, liveType, duration) in group {
-                self.currentProgress = (userName, platformName, status, index + 1, roomList.count)
+                await reportProgress((userName, platformName, status, index + 1, favorites.count))
                 favoriteSyncLog("\(platformName) - \(userName) \(status) in \(formatSeconds(duration))s")
 
                 var stat = platformStats[liveType] ?? (0, 0, 0, 0)
@@ -160,7 +177,7 @@ public actor FavoriteStateModel {
             // 身份 diff:在 dedup/排序之前按 index 配对 旧(本地真相)↔ 新(刷新结果)。
             // 仅非 preserve 平台、且身份字段(非 liveState)有"非降级"变化时产出回写事件。
             // preserve 平台身份不刷新、失败项身份未变,均自然不产出。
-            for (index, old) in roomList.enumerated() {
+            for (index, old) in favorites.enumerated() {
                 guard let new = resultModels[index] else { continue }
                 if PlatformHostBehavior.shouldPreserveFavoriteRoomInfoOnRefresh(for: old.liveType) { continue }
                 guard AppFavoriteModel.favoriteIdentityChanged(old: old, new: new) else { continue }

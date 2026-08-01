@@ -135,7 +135,7 @@ public final class AppFavoriteModel {
     /// 引擎拉到远端变更后回调上层刷新(独立 helper,避免在预热 Task 里嵌套捕获 self)。
     @MainActor
     private func wireRemoteChange() {
-        FavoriteSyncEngine.shared.onRemoteChange = { [weak self] in
+        FavoriteSyncEngine.shared.onRemoteChange = { @MainActor [weak self] in
             await self?.reloadFromLocalAfterRemoteChange()
         }
     }

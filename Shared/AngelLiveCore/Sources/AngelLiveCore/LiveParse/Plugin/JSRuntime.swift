@@ -1,6 +1,36 @@
 import Foundation
 @preconcurrency import JavaScriptCore
 
+/// 一次性所有权转移盒 —— **本文件私有,用途只有一个**:把插件调用的 `payload`
+/// 从调用方隔离域搬进 JSContext 所在的串行队列。
+///
+/// ## 为什么需要逃生舱
+///
+/// `[String: Any]` 不是 `Sendable`(`Any` 可能装引用类型),而 `JSValue(object:)`
+/// 必须在 JSContext 的队列上构造,payload 无法避免跨隔离域。
+///
+/// ## 为什么不用别的办法
+///
+/// - **`sending` 修饰符**:实测会沿调用链向上传播,`LiveParsePluginManager.call` /
+///   `callDecodable`、`PluginJSDanmakuDriver.call`、`LiveParsePluginUpdater`、
+///   `LiveParseJSPlatformManager` 逐个被要求标注,公开 API 被污染,
+///   且警告总数不降反升(13 → 16),JSRuntime 内部那条始终未清。已回退,见 commit 30a0b41。
+/// - **跨域前 JSON 序列化**:`JSValue(object:)` 能桥接 `Date` 等
+///   `JSONSerialization` 会拒绝的类型。现有代码对 payload 序列化用的是 `try?`,
+///   说明 payload 不保证 JSON 安全,改走 JSON 会把「容忍失败」变成「抛错」,
+///   属运行时行为变更。
+///
+/// ## 安全依据
+///
+/// `Dictionary` 是值类型,传参即拷贝(COW),调用方后续修改不会影响盒内的值。
+/// 残余风险仅在于 `Any` 内部可能嵌有引用类型;插件 payload 按契约只含
+/// 字符串/数字/布尔/嵌套字典与数组,不含共享可变对象。
+///
+/// **不要把这个类型挪出本文件或用于其他场景。**
+private struct PluginPayloadTransferBox: @unchecked Sendable {
+    let value: [String: Any]
+}
+
 public final class JSRuntime: @unchecked Sendable {
     public typealias LogHandler = @Sendable (String) -> Void
 
@@ -82,7 +112,10 @@ public final class JSRuntime: @unchecked Sendable {
     }
 
     public func callPluginFunction(name: String, payload: [String: Any] = [:]) async throws -> Any {
-        try await withCheckedThrowingContinuation { continuation in
+        // payload 必须跨到 JSContext 的串行队列才能构造 JSValue;
+        // 装盒完成一次性所有权转移,理由与安全依据见 PluginPayloadTransferBox 文档。
+        let payloadBox = PluginPayloadTransferBox(value: payload)
+        return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 do {
                     Logger.debug("[JSRuntime:\(self.pluginId)] callPluginFunction(\(name)) 进入队列", category: .plugin)
@@ -93,7 +126,7 @@ public final class JSRuntime: @unchecked Sendable {
                         throw LiveParsePluginError.invalidReturnValue("Missing function: \(name)")
                     }
 
-                    let jsPayload = JSValue(object: payload, in: self.context) as Any
+                    let jsPayload = JSValue(object: payloadBox.value, in: self.context) as Any
                     guard let result = pluginObject.invokeMethod(name, withArguments: [jsPayload]) else {
                         if let exception = self.context.exception {
                             throw LiveParsePluginError.fromJSException(exception.toString() ?? "<unknown>")
