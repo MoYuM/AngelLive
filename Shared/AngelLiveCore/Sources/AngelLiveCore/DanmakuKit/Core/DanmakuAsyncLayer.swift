@@ -14,7 +14,9 @@ import UIKit
 import AppKit
 #endif
 
-final class Sentinel: @unchecked Sendable {
+/// 内部状态全部收在 `OSAllocatedUnfairLock` 里,该类型自身即 `Sendable`,
+/// 故本类无需 `@unchecked` 逃生舱。
+final class Sentinel: Sendable {
 
     private let lock = OSAllocatedUnfairLock(initialState: Int32(0))
 

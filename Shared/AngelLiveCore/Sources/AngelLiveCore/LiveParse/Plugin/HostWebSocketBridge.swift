@@ -1,4 +1,5 @@
 import Foundation
+import os.lock
 @preconcurrency import JavaScriptCore
 @preconcurrency import Starscream
 
@@ -111,23 +112,22 @@ extension HostWebSocketSession: WebSocketDelegate {
 
 /// 全局会话注册表。pluginId 仅做调试日志追踪用,不参与隔离。
 enum HostWebSocketRegistry {
-    private static let lock = NSLock()
-    private static var sessions: [String: HostWebSocketSession] = [:]
+    /// 会话表收进 `OSAllocatedUnfairLock` 的受保护状态里(原为 `NSLock` + `static var`)。
+    /// 语义与加锁范围完全不变,但存储变成 `let` 且类型自身 `Sendable`,
+    /// 因此不再是「nonisolated 全局可变状态」——Swift 6 下不需要逃生舱,调用点也无需改成 async。
+    private static let sessions = OSAllocatedUnfairLock<[String: HostWebSocketSession]>(initialState: [:])
 
     static func add(_ session: HostWebSocketSession) {
-        lock.lock(); defer { lock.unlock() }
-        sessions[session.id] = session
+        sessions.withLock { $0[session.id] = session }
     }
 
     static func get(_ id: String) -> HostWebSocketSession? {
-        lock.lock(); defer { lock.unlock() }
-        return sessions[id]
+        sessions.withLock { $0[id] }
     }
 
     @discardableResult
     static func remove(_ id: String) -> HostWebSocketSession? {
-        lock.lock(); defer { lock.unlock() }
-        return sessions.removeValue(forKey: id)
+        sessions.withLock { $0.removeValue(forKey: id) }
     }
 }
 

@@ -1,6 +1,8 @@
 import Foundation
 
-protocol NativeStreamProvider {
+/// Provider 是无状态的解析器,注册表全局共享一份,故要求 `Sendable`。
+/// 这样 `providers` / `providersById` 两个 `static let` 才不再被判为非并发安全的全局状态。
+protocol NativeStreamProvider: Sendable {
     var providerIds: [String] { get }
 
     func resolve(options: [String: Any]) async throws -> [String: Any]

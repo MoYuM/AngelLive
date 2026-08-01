@@ -12,11 +12,16 @@ import Alamofire
 // MARK: - 网络请求详情
 
 /// 网络请求的详细信息，用于错误追踪和调试
-public struct NetworkRequestDetail {
+public struct NetworkRequestDetail: Sendable {
     public let url: String
     public let method: String
     public let headers: [String: String]?
-    public let parameters: [String: Any]?
+    /// 请求参数的字符串化快照。
+    ///
+    /// 入参仍接受 Alamofire 的 `Parameters`(`[String: Any]`),但在此处即时字符串化后存储:
+    /// `Any` 不是 `Sendable`,而本类型是 `Sendable` 错误枚举的关联值,必须可跨隔离域传递。
+    /// 该字段纯用于诊断展示(从未被结构化读取),字符串化不损失可用信息。
+    public let parameters: [String: String]?
     public let body: String?
     public let timestamp: Date
 
@@ -31,7 +36,7 @@ public struct NetworkRequestDetail {
         self.url = url
         self.method = method
         self.headers = headers
-        self.parameters = parameters
+        self.parameters = parameters?.mapValues { String(describing: $0) }
         self.body = body
         self.timestamp = timestamp
     }
@@ -80,7 +85,7 @@ public struct NetworkRequestDetail {
 }
 
 /// 网络响应的详细信息
-public struct NetworkResponseDetail {
+public struct NetworkResponseDetail: Sendable {
     public let statusCode: Int
     public let headers: [String: String]?
     public let body: String?
