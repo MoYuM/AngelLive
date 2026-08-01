@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import AngelLiveCore
 
 struct DanmuView: UIViewRepresentable {
     var coordinator: Coordinator
@@ -15,6 +16,10 @@ struct DanmuView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> DanmakuView {
         let view = DanmakuView(frame: .init(x: 0, y: 0, width: 1920, height: height))
+        // 大屏观看距离远、视线集中在上部,弹幕从顶部起排比散开更易读。
+        // 这是 tvOS 相对 iOS/macOS 的有意特化(原先靠 Third/DanmakuKit 副本实现,
+        // 合并到共享引擎后改由策略参数表达)。
+        view.floatingTrackPolicy = .topPriority
         view.playingSpeed = Float(appViewModel.danmuSettingsViewModel.danmuSpeed)
         view.play()
         coordinator.uiView = view

@@ -81,6 +81,19 @@ public class DanmakuView: DanmakuBaseView {
     
     /// If this property is false, the danmaku will not be reused and danmakuView(_:dequeueReusable danmaku:) methods will not be called.
     public var enableCellReusable = false
+
+    /// 滚动弹幕的选轨策略。手机/桌面与大屏对"好看"的定义不同,故做成策略而非二选一。
+    public enum FloatingTrackPolicy: Sendable {
+        /// 错落感优先:在所有可发轨道里挑弹幕最少的,并在并列者中随机。
+        /// 打散「一批同时到达 → 从上往下码成一道竖墙」。iOS / macOS 默认。
+        case scattered
+        /// 顶部优先:低密度时集中在顶部,仅当上方轨道占满才向下扩展。
+        /// tvOS 大屏观看距离远,视线集中在上部,散开反而难读。
+        case topPriority
+    }
+
+    /// 默认 `.scattered`,与 iOS / macOS 现有行为一致;tvOS 显式设为 `.topPriority`。
+    public var floatingTrackPolicy: FloatingTrackPolicy = .scattered
     
     /// Each danmaku is in one track and the number of tracks in the view depends on the height of the track.
     public var trackHeight: CGFloat = 20 {
@@ -193,6 +206,10 @@ public class DanmakuView: DanmakuBaseView {
     private var danmakuPool: [String: [DanmakuCell]] = [:]
     
     private var floatingTracks: [DanmakuTrack] = []
+
+    /// 当前实际可见的滚动轨道数。`floatingTracks` 在重算时不会立即移除仍有在飞弹幕的尾部轨道,
+    /// 因此它的 count 可能临时大于这个值。仅 `.topPriority` 策略需要。
+    private var visibleFloatingTrackCount = 0
     
     private var topTracks: [DanmakuTrack] = []
     
@@ -453,6 +470,7 @@ private extension DanmakuView {
             trackCount = Int(floorf(Float(availableHeight / trackHeight)))
         }
         trackCount = Int(floorf(Float((viewHeight - paddingTop - paddingBottom) / trackHeight)))
+        visibleFloatingTrackCount = max(0, trackCount)
         let offsetY = max(0, (viewHeight - CGFloat(trackCount) * trackHeight) / 2.0)
         let diffFloatingTrackCount = trackCount - floatingTracks.count
         if diffFloatingTrackCount > 0 {
@@ -567,11 +585,20 @@ private extension DanmakuView {
     func findSuitableTrack(for danmaku: DanmakuCellModel) -> DanmakuTrack? {
         switch danmaku.type {
         case .floating:
-            // §6.2 错落感:收集所有可发轨道,在弹幕最少的轨道中随机挑一条,打散「从上往下顺序堆叠」
-            let candidates = floatingTracks.filter { $0.canShoot(danmaku: danmaku) }
-            guard !candidates.isEmpty else { return nil }
-            let minCount = candidates.map { $0.danmakuCount }.min()!
-            return candidates.filter { $0.danmakuCount == minCount }.randomElement()
+            switch floatingTrackPolicy {
+            case .scattered:
+                // §6.2 错落感:收集所有可发轨道,在弹幕最少的轨道中随机挑一条,打散「从上往下顺序堆叠」
+                let candidates = floatingTracks.filter { $0.canShoot(danmaku: danmaku) }
+                guard !candidates.isEmpty else { return nil }
+                let minCount = candidates.map { $0.danmakuCount }.min()!
+                return candidates.filter { $0.danmakuCount == minCount }.randomElement()
+            case .topPriority:
+                // 大屏:低密度弹幕从顶部开始,只有上方轨道忙时才向下扩展。
+                // 限制在 visibleFloatingTrackCount 内——recalculate 时非空轨道不会被立即移除,
+                // floatingTracks.count 可能临时大于当前实际可见轨道数。
+                let visibleTracks = floatingTracks.prefix(min(visibleFloatingTrackCount, floatingTracks.count))
+                return visibleTracks.first { $0.canShoot(danmaku: danmaku) }
+            }
         case .top:
             guard let track = topTracks.first(where: { (t) -> Bool in
                 return t.canShoot(danmaku: danmaku)
