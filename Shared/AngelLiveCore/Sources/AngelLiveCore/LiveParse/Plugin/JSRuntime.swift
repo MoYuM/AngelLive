@@ -446,6 +446,11 @@ private extension JSRuntime {
 
             request.httpBody = envelope.body
 
+            // 至此 requestHeaders 不再变更。下面的响应闭包只用它做日志记录,
+            // 捕获可变 var 会被判为「并发执行代码中引用捕获的 var」,
+            // 故在此固化成不可变快照([String: String] 本身 Sendable)。
+            let loggedRequestHeaders = requestHeaders
+
             // 开发者控制台：记录请求开始时间
             let httpStartTime = CFAbsoluteTimeGetCurrent()
 
@@ -457,7 +462,7 @@ private extension JSRuntime {
                         // 开发者控制台：记录失败的 HTTP 请求
                         Self.logHTTPRecord(
                             pluginId: pluginId, envelope: envelope,
-                            requestHeaders: requestHeaders,
+                            requestHeaders: loggedRequestHeaders,
                             statusCode: nil, responseHeaders: nil,
                             responseBody: nil, error: error.localizedDescription,
                             duration: httpElapsed
@@ -469,7 +474,7 @@ private extension JSRuntime {
                     guard let http = response as? HTTPURLResponse else {
                         Self.logHTTPRecord(
                             pluginId: pluginId, envelope: envelope,
-                            requestHeaders: requestHeaders,
+                            requestHeaders: loggedRequestHeaders,
                             statusCode: nil, responseHeaders: nil,
                             responseBody: nil, error: "Invalid response",
                             duration: httpElapsed
@@ -504,7 +509,7 @@ private extension JSRuntime {
                     // 开发者控制台：记录成功的 HTTP 请求
                     Self.logHTTPRecord(
                         pluginId: pluginId, envelope: envelope,
-                        requestHeaders: requestHeaders,
+                        requestHeaders: loggedRequestHeaders,
                         statusCode: http.statusCode, responseHeaders: headersDict,
                         responseBody: bodyText.map { String($0.prefix(2000)) },
                         error: nil, duration: httpElapsed
@@ -861,15 +866,21 @@ private extension JSRuntime {
                         declaration: nativeStream
                     )
 
+                    // 在跳到 JS 队列之前先完成序列化:这样跨隔离域传递的只有 String(Sendable),
+                    // 而不是非 Sendable 的 [String: Any]。
+                    // 序列化失败改由下面的 catch 统一走 reject,错误文案保持区分。
+                    let jsonString: String
+                    do {
+                        jsonString = try Self.jsonString(from: streamInfo)
+                    } catch {
+                        throw LiveParsePluginError.invalidReturnValue(
+                            "Native stream serialize failed: \(error.localizedDescription)"
+                        )
+                    }
+
                     queue.async {
-                        do {
-                            let jsonString = try Self.jsonString(from: streamInfo)
-                            resolve.call(withArguments: [jsonString])
-                            context.evaluateScript("void(0)")
-                        } catch {
-                            reject.call(withArguments: ["Native stream serialize failed: \(error.localizedDescription)"])
-                            context.evaluateScript("void(0)")
-                        }
+                        resolve.call(withArguments: [jsonString])
+                        context.evaluateScript("void(0)")
                     }
                 } catch {
                     queue.async {
