@@ -1,6 +1,10 @@
 import Foundation
 @preconcurrency import Alamofire
 
+/// 与 `WebSocketConnection` 同构:轮询 Timer 落在主 runloop,delegate 是 UI 层,
+/// 状态(isConnected / isRequestInFlight / pollingTimer 等)本就只在主线程读写。
+/// 标注 `@MainActor` 把这份既有约定交给编译器保证。
+@MainActor
 public final class HTTPPollingDanmakuConnection {
     public var parameters: [String: String]?
     var headers: [String: String]?
@@ -55,7 +59,9 @@ public final class HTTPPollingDanmakuConnection {
         parseConfig()
     }
 
-    deinit {
+    /// `isolated deinit`:在主 actor 上执行析构,理由同 `WebSocketConnection`——
+    /// nonisolated deinit 无法访问非 Sendable 的 `pollingTimer`,也就复用不了 `disconnect()`。
+    isolated deinit {
         Task { [pluginDriver] in
             await pluginDriver?.destroy(reason: .deinitialized)
         }
@@ -134,7 +140,10 @@ private extension HTTPPollingDanmakuConnection {
     func startPollingTimer() {
         stopPollingTimer()
         pollingTimer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
-            self?.runDriverTick()
+            // Timer 下面即被加进 RunLoop.current(主 runloop),回调必在主线程。
+            MainActor.assumeIsolated {
+                self?.runDriverTick()
+            }
         }
         if let pollingTimer {
             RunLoop.current.add(pollingTimer, forMode: .common)
@@ -206,14 +215,18 @@ private extension HTTPPollingDanmakuConnection {
 
         isRequestInFlight = true
         AF.request(request).responseData { [weak self] response in
-            guard let self else { return }
-            self.isRequestInFlight = false
+            // Alamofire 的 responseData 默认 `queue: DispatchQueue = .main`,此处未覆盖,
+            // 故回调必在主线程,直接复用主 actor 隔离即可,无需再跳一次。
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isRequestInFlight = false
 
-            switch response.result {
-            case .success(let data):
-                self.handleHTTPResponse(data: data, response: response.response)
-            case .failure(let error):
-                self.handleDriverFailure(error)
+                switch response.result {
+                case .success(let data):
+                    self.handleHTTPResponse(data: data, response: response.response)
+                case .failure(let error):
+                    self.handleDriverFailure(error)
+                }
             }
         }
     }

@@ -195,7 +195,7 @@ public struct LiveQualityDetail: Codable, Sendable {
     public var playbackHints: LivePlaybackHints?
 }
 
-public struct LiveCategoryModel: Codable {
+public struct LiveCategoryModel: Codable, Sendable {
     /// 资源侧分类 ID，宿主仅透传。
     public var id: String
     /// 资源侧父分类 ID，宿主仅透传。

@@ -46,12 +46,16 @@ class TimerManager {
         onTimerEnd = onEnd
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+            // 本类隐式 @MainActor(target 开了默认 MainActor 隔离),startTimer 必在主线程调用,
+            // scheduledTimer 因而挂在主 runloop 上,回调也在主线程。
+            MainActor.assumeIsolated {
+                guard let self = self else { return }
 
-            if self.remainingSeconds > 0 {
-                self.remainingSeconds -= 1
-            } else {
-                self.timerCompleted()
+                if self.remainingSeconds > 0 {
+                    self.remainingSeconds -= 1
+                } else {
+                    self.timerCompleted()
+                }
             }
         }
 
@@ -79,7 +83,9 @@ class TimerManager {
         callback?()
     }
 
-    deinit {
+    /// `isolated deinit`:在主 actor 上析构,否则 nonisolated deinit 无法调用
+    /// @MainActor 的 `cancelTimer()`,也访问不到非 Sendable 的 `timer`。
+    isolated deinit {
         cancelTimer()
     }
 }

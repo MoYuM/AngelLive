@@ -226,7 +226,10 @@ struct PlatformLoginWebSheet: View {
         cookiePollingTimer?.invalidate()
         pollCookieOnce(entry: entry)
         cookiePollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            pollCookieOnce(entry: entry)
+            // startCookiePolling 在主线程调用,scheduledTimer 因而挂在主 runloop,回调也在主线程。
+            MainActor.assumeIsolated {
+                pollCookieOnce(entry: entry)
+            }
         }
     }
 

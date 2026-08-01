@@ -1,6 +1,9 @@
 import Foundation
-import Starscream
+@preconcurrency import Starscream
 
+/// 实现方均为三端 `RoomInfoViewModel`(UI 层),回调本就只在主线程消费,
+/// 故协议显式标注 `@MainActor`,让隔离要求从"约定"变成"编译器保证"。
+@MainActor
 public protocol WebSocketConnectionDelegate: AnyObject {
     func webSocketDidConnect()
     func webSocketDidDisconnect(error: Error?)
@@ -14,6 +17,15 @@ public extension WebSocketConnectionDelegate {
     func webSocketIsReconnecting(attempt: Int, maxAttempts: Int) {}
 }
 
+/// 本类原本就是"事实上的主线程收口"——所有状态变更都靠 `DispatchQueue.main.async`、
+/// `Task { @MainActor in }`、`await MainActor.run` 手工跳回主线程,只是编译器无从证明,
+/// 于是每一次跳转都被判为"sending 非 Sendable self"。
+///
+/// 显式标注 `@MainActor` 后,这些手工收口全部变成可证明的冗余,得以删除;
+/// Starscream 的 delegate 回调默认就在 `DispatchQueue.main`(其 `callbackQueue` 默认值),
+/// 故 `didReceive` 用 `assumeIsolated` 而非 `Task {}` 跳板——后者会把事件推迟到下一轮,
+/// 破坏弹幕消息与连接事件的到达顺序。
+@MainActor
 public final class WebSocketConnection {
     var socket: WebSocket?
     public var parameters: [String: String]?
@@ -101,7 +113,10 @@ public final class WebSocketConnection {
         }
     }
 
-    deinit {
+    /// `isolated deinit`:在主 actor 上执行析构。
+    /// 否则 nonisolated deinit 无法访问 `socket` / `reconnectTimer` 这类非 Sendable 存储属性
+    /// (Swift 6 会报错),也就没法复用 `disconnect()` 的完整拆除逻辑。
+    isolated deinit {
         Task { [pluginDriver] in
             await pluginDriver?.destroy(reason: .deinitialized)
         }
@@ -199,12 +214,8 @@ public final class WebSocketConnection {
     }
 
     /// 安排下一次重连:指数退避 + 抖动 + 次数上限。到达上限则放弃并通知 UI。
-    /// 可能从后台 Task(驱动回调)调入,Timer 必须落到主 runloop 才会触发,故统一切主线程。
+    /// 类已是 `@MainActor`,Timer 必然落在主 runloop,原先手写的 `Thread.isMainThread` 收口已冗余。
     private func scheduleReconnect() {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.scheduleReconnect() }
-            return
-        }
         guard shouldReconnect else { return }
 
         guard reconnectAttempts < maxReconnectAttempts else {
@@ -227,9 +238,13 @@ public final class WebSocketConnection {
         let backoff = min(2.0 * pow(2.0, Double(reconnectAttempts)), 30.0)
         let interval = backoff + Double.random(in: 0...1)
         reconnectTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            guard let self, self.shouldReconnect else { return }
-            self.reconnectAttempts += 1
-            self.reconnectWithFreshSession()
+            // Timer 下面就被加进 RunLoop.current(主 runloop),回调必在主线程,
+            // 故用 assumeIsolated 直接复用隔离,不额外引入一跳。
+            MainActor.assumeIsolated {
+                guard let self, self.shouldReconnect else { return }
+                self.reconnectAttempts += 1
+                self.reconnectWithFreshSession()
+            }
         }
         if let reconnectTimer {
             RunLoop.current.add(reconnectTimer, forMode: .common)
@@ -238,10 +253,6 @@ public final class WebSocketConnection {
 
     /// 重连:销毁旧 driver,用新的 connectionId 重建并重跑 createSession(刷新握手/token),再连 socket。
     private func reconnectWithFreshSession() {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.reconnectWithFreshSession() }
-            return
-        }
         guard shouldReconnect else { return }
 
         // 通知 UI 本次重连已开始(attempt 已在调度时自增)
@@ -391,7 +402,19 @@ private extension WebSocketConnection {
 }
 
 extension WebSocketConnection: WebSocketDelegate {
-    public func didReceive(event: Starscream.WebSocketEvent, client: Starscream.WebSocketClient) {
+    /// Starscream 的 `callbackQueue` 默认值就是 `DispatchQueue.main`,且本类从未覆盖它,
+    /// 因此该回调必定在主线程。这里用 `assumeIsolated` 直接复用主 actor 隔离,
+    /// **刻意不用 `Task { @MainActor in }`** —— 后者会把事件推迟到下一轮,
+    /// 打乱 connected / message / disconnected 的到达顺序,对弹幕流是实质行为变更。
+    ///
+    /// `client` 参数原实现未使用,故不透传。
+    public nonisolated func didReceive(event: Starscream.WebSocketEvent, client: Starscream.WebSocketClient) {
+        MainActor.assumeIsolated {
+            handleSocketEvent(event)
+        }
+    }
+
+    private func handleSocketEvent(_ event: Starscream.WebSocketEvent) {
         switch event {
         case .connected:
             reconnectTimer?.invalidate()
@@ -509,15 +532,10 @@ private extension WebSocketConnection {
         }
     }
 
-    /// 驱动结果应用:必须在主线程执行。
-    /// 调用点均在 `Task { await pluginDriver.xxx() ... applyDriverResult }` 里,续体会恢复在
-    /// Swift 并发协作线程池的后台线程上。心跳定时器、delegate 回调(UI)、socket 写入都要求主线程,
-    /// 故整体切主线程,顺带消除 heartbeatTimer 属性的跨线程读写竞争。
+    /// 驱动结果应用:心跳定时器、delegate 回调(UI)、socket 写入都要求主线程。
+    /// 类已是 `@MainActor`,调用点里 `await` 的续体会自动恢复到主 actor,
+    /// 原先手写的 `Thread.isMainThread` 收口与 heartbeatTimer 跨线程竞争问题一并由隔离保证。
     func applyDriverResult(_ result: LiveParseDanmakuDriverResult) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.applyDriverResult(result) }
-            return
-        }
         deliverMessages(result.messages)
         sendWrites(result.writes)
         updateTimer(result.timer)
@@ -614,12 +632,8 @@ private extension WebSocketConnection {
         }
     }
 
-    /// 可能从后台(socket 回调)调入,统一切主线程,保证 timer 操作安全。
+    /// timer 操作要求主线程,由类的 `@MainActor` 隔离保证。
     func handleConnectionFailure(_ error: Error?) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.handleConnectionFailure(error) }
-            return
-        }
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         notifyDisconnectedOnce(error: error)
@@ -627,12 +641,8 @@ private extension WebSocketConnection {
     }
 
     /// 致命驱动错误(插件未声明 driver / 驱动丢失):不重连,彻底关闭。
-    /// 可能从后台(socket/驱动回调)调入,统一切主线程,保证 timer/socket 操作安全。
+    /// timer/socket 操作要求主线程,由类的 `@MainActor` 隔离保证。
     func handleFatalDriverError(_ error: Error) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.handleFatalDriverError(error) }
-            return
-        }
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         shouldReconnect = false
@@ -652,12 +662,8 @@ private extension WebSocketConnection {
     }
 
     /// 可恢复驱动错误(createSession/onOpen/onFrame/onTick 抛错):清理后走有限退避重连(重建 session)。
-    /// 可能从后台 Task(驱动回调)调入,统一切主线程,保证 socket/timer/delegate 操作安全。
+    /// socket/timer/delegate 操作要求主线程,由类的 `@MainActor` 隔离保证。
     func handleRecoverableDriverFailure(_ error: Error) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.handleRecoverableDriverFailure(error) }
-            return
-        }
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         notifyDisconnectedOnce(error: error)

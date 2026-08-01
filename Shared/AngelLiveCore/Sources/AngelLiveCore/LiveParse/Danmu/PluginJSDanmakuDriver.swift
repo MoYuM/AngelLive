@@ -1,6 +1,8 @@
 import Foundation
 
-final class PluginJSDanmakuDriver {
+/// 无可变状态:全部存储属性均为 `let` 且类型 `Sendable`,方法只是把调用透传给插件运行时。
+/// 故本类天然 `Sendable`,可安全跨隔离域捕获(连接层的 `Task { [pluginDriver] ... }` 依赖这一点)。
+final class PluginJSDanmakuDriver: Sendable {
     enum TickReason: String {
         case heartbeat
         case polling
