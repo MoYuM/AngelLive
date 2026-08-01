@@ -3,7 +3,20 @@
 Date: 2026-06-09
 Scope: static, read-only SwiftUI review for AngelLive using the `swiftui-specialist` guidance.
 
-Current status (2026-07-25): P1 model/card identity and the main dynamic list identities were fixed in `9d2fc8c` and `1ace1d3`; non-local `@State` cleanup and large-view extraction remain.
+Current status (verified against code 2026-07-31): the four identity findings are fixed; only the two lowest-priority items remain.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | `LiveModel` identity/hash consistency | ✅ Fixed — `id` is now `"\(liveType.rawValue)-\(roomId)"`; `==` and `hash` both use `liveType` + `roomId` |
+| 2 | tvOS `LiveCardView` stores parent inputs in `@State` | ✅ Fixed — `let index: Int`; `currentLiveModel` is a plain stored property; only `isLive` remains `@State private` |
+| 3 | Dynamic lists use index as identity | ✅ Fixed — room/category lists now use `ForEach(Array(...enumerated()), id: \.element.id)` |
+| 4 | `FavoriteLiveSectionModel` random UUID id | ✅ Fixed — `public var id: String { title }`, with a comment explaining why not `type` |
+| 5 | Non-private / non-local `@State` | ⬜ Remaining |
+| 6 | Large views rely on computed `some View` | ⬜ Remaining |
+
+Fixed in `9d2fc8c` and `1ace1d3`.
+
+**Note on remaining `indices, id: \.self` usages.** A 2026-07-31 sweep still finds ~10 of these, but all are over **static arrays** (`searchTypeArray`, `DanmuSettingModel.danmuSpeedArray` / `danmuAreaArray`, `SegmentedControl.items`). These never reorder at runtime and fall under the "lower risk" note in finding 3. No action planned.
 
 ## Summary
 
@@ -311,12 +324,14 @@ The scan found many `.onChange(of:)` calls, most already use the newer old/new v
 
 ## Suggested Remediation Order
 
-1. Fix `LiveModel` identity/hash consistency.
-2. Fix `TV/AngelLiveTVOS/Source/List/LiveCardView.swift` so parent inputs are not stored in `@State`.
-3. Update tvOS dynamic room/category lists to use stable element ids instead of indices.
-4. Stabilize `FavoriteLiveSectionModel.id`.
-5. Clean up non-private or non-local `@State` properties opportunistically.
+1. ~~Fix `LiveModel` identity/hash consistency.~~ ✅ done
+2. ~~Fix `TV/AngelLiveTVOS/Source/List/LiveCardView.swift` so parent inputs are not stored in `@State`.~~ ✅ done
+3. ~~Update tvOS dynamic room/category lists to use stable element ids instead of indices.~~ ✅ done
+4. ~~Stabilize `FavoriteLiveSectionModel.id`.~~ ✅ done
+5. Clean up non-private or non-local `@State` properties opportunistically. ← **next**
 6. Refactor one large playback/focus screen at a time into smaller `View` structs with narrow inputs.
+
+Items 5 and 6 are both opportunistic — neither is a correctness bug. Item 6 pairs naturally with any future work on the playback control surface (see `docs/PlaybackResilienceRoadmap.md` ②, which will add new state to those same views).
 
 ## Validation Plan
 

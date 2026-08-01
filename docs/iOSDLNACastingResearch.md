@@ -27,7 +27,7 @@ DLNA 可以接入 AngelLive，但它不是 iPhone 屏幕镜像。公开播放源
 | `RoomInfoViewModel.swift` | 记录当前 URL、播放器类型和 HLS 状态 | 可作为 Cast 请求的来源，但需要同时读取流格式、请求头和 URL 时效性 |
 | `RoomPlaybackResolver.swift` | 支持自定义 User-Agent、Referer、Cookie 等请求头 | 电视直接取流时通常无法携带这些请求头，是投屏失败的主要来源 |
 | `Info.plist` | 已有 `NSLocalNetworkUsageDescription` 和 AngelLive 自有 Bonjour 服务 | 本地网络文案需要覆盖电视发现/投送；现有 Bonjour 服务不等于 SSDP |
-| `AngelLive.entitlements` | 当前未看到 multicast key | 用户已申请过权限，但仓库和签名配置仍需确认 `com.apple.developer.networking.multicast` 已写入并随 profile 生效 |
+| `AngelLive.entitlements` | ✅ 已写入 `com.apple.developer.networking.multicast`(2026-07-31 核对) | 仓库侧已就位；仍需确认 App ID capability 与实际签名用的 provisioning profile 同步生效 |
 | iOS target | iOS 17 | 可使用 Swift 并发；`AVCustomRoutingController` 也满足系统版本要求 |
 
 现有 AirPlay 逻辑继续保留。DLNA 是额外的投送方式，不应修改成“所有设备都走 `AVRoutePickerView`”。
@@ -87,11 +87,13 @@ Apple 文档明确规定，iOS 上发送或接收 IP multicast/broadcast 需要�
 
 `com.apple.developer.networking.multicast`
 
-用户已确认该权限已经申请过。接入前仍需检查三处是否一致：
+用户已确认该权限已经申请过。三处一致性检查：
 
-1. Apple Developer App ID 的 capability 已开启。
-2. Xcode Signing & Capabilities 和生成的 provisioning profile 已包含 capability。
-3. `iOS/AngelLive/AngelLive.entitlements` 中有对应的 Boolean key。
+1. Apple Developer App ID 的 capability 已开启。—— 待确认
+2. Xcode Signing & Capabilities 和生成的 provisioning profile 已包含 capability。—— 待确认
+3. `iOS/AngelLive/AngelLive.entitlements` 中有对应的 Boolean key。—— ✅ 已确认(2026-07-31)
+
+第 1、2 项无法从仓库判断,需在 Apple Developer 后台与实际签名产物上核对。真机发现不到设备时,这两处是第一排查点。
 
 这项 entitlement 与 `NSBonjourServices` 是两回事。AngelLive 现有 `_angellive-cookie._tcp` 只服务于登录同步，不需要替换；DLNA 的 SSDP 使用 IP multicast。
 

@@ -1,6 +1,16 @@
 # 播放链路韧性改进路线图
 
-> 状态:部分完成 · 统一恢复协调器已上线；剩余恢复文案、CDN 偏好学习与 PlaybackTimeline · 更新于 2026-07-25
+> 状态:部分完成 · 统一恢复协调器已上线；剩余恢复文案、CDN 偏好学习与 PlaybackTimeline · 更新于 2026-07-31
+>
+> 落地对照(2026-07-31 核对代码):
+>
+> | 项 | 状态 | 说明 |
+> |---|---|---|
+> | §2 `PlaybackTuning` 命名空间 | ✅ 已上线 | `Shared/AngelLiveCore/Sources/AngelLiveCore/Playback/PlaybackTuning.swift`,并额外提供 `RecoveryConfig`(按端注入起播超时等差异) |
+> | ① stall 退避 | ⚠️ **方案已变更** | 未采用退避数组,改为**固定抬高阈值**。详见 §1 ① |
+> | ② `PlaybackPhase` + 恢复文案 | 🟠 部分 | 已有 `PlaybackStatusMachine`(idle/loading/buffering/paused/playing/ended/failed),但**缺细分态**(`fetchingPlayArgs`/`connecting`/`bufferingFirstFrame`)与 `PlaybackRecoveryEvent` toast,用户仍看不到「正在切换线路」 |
+> | ⑤ `CDNPreferenceStore` | ❌ 未开始 | 无该文件 |
+> | ⑨ `PlaybackEventLog` + Timeline | ❌ 未开始 | 无该文件 |
 > 范围:三端(iOS / macOS / tvOS)直播播放链路
 > 目标:把"弱网误判 stall / 用户无感知 / CDN 起播没记忆 / 调参没工具"四类痛点收一收
 
@@ -39,7 +49,23 @@
 
 本轮**只做 4 项**,理由见 §3。
 
-### ① Stall watchdog 加指数退避
+### ① Stall watchdog 加指数退避 — ⚠️ 已改为固定抬高阈值
+
+> **2026-07-31 实际落地与本节设计不同。** 最终没有采用退避数组,而是把零吞吐阈值从 8s **固定抬到 12s**:
+>
+> ```swift
+> // PlaybackTuning.swift
+> /// 零吞吐 stall 判定阈值。抬高于旧的 8s —— 8s < 单个 HLS 分片时长会把正常大分片流误判。
+> public static let stallThresholdSeconds: TimeInterval = 12
+> ```
+>
+> **改用固定阈值的理由**:退避方案要解决的是「重试越多越宽容」,但实测主要误判源是**单个 HLS 分片时长本身就可能超过 8s**——这与重试次数无关,退避解决不了首次误判。抬高下限直接命中该场景。
+>
+> 同时引入 `PlaybackTuning.healthyConfirmSeconds = 20`:只有**连续健康 20s 且 playhead 单调推进**才清零熔断预算,替代了原「短暂 readyToPlay 即清零」——抖动流因此会消耗预算,恢复循环有终点。
+>
+> 自适应阈值(按观测到的实际分片间隔动态调整)保留为后续可选项,`PlaybackTuning` 注释中已标注。
+>
+> 以下为原设计,保留作决策记录。
 
 **问题**
 `stallThresholdSeconds = 8s` 触发 → CDN failover。弱网下 8s 零吞吐其实很常见:
@@ -209,11 +235,15 @@ public final class PlaybackEventLog {
 
 ---
 
-## 2. 通用基础 · Playback 命名空间(共享层)
+## 2. 通用基础 · Playback 命名空间(共享层) — ✅ 已上线
 
 `①②` 都要在三端 VM 各改一份。**不做 ⑥**(actor controller),但抽常量和纯类型,降低漂移。
 
-**新建** `Shared/AngelLiveCore/Sources/AngelLiveCore/Playback/PlaybackTuning.swift`:
+> **已落地,且比本节设计更进一步。** 实际的 `PlaybackTuning.swift` 除常量外还提供了 `RecoveryConfig` 结构体 + `phone()` / `desktopTV()` 工厂方法,把三端差异(起播超时 iOS 20s、macOS/tvOS 12s;`stallMonitoringEnabled` 按内核区分)**显式注入**而非散落各端。
+>
+> 常量清单也与下方草案有出入(以代码为准):新增 `healthyConfirmSeconds`、`tickInterval`、`hasKickPipeline`;`stallBackoffSeconds` 数组未采用(见 ①)。
+
+**新建**(草案,实际实现见代码) `Shared/AngelLiveCore/Sources/AngelLiveCore/Playback/PlaybackTuning.swift`:
 ```swift
 public enum PlaybackTuning {
     public static let stallBackoffSeconds: [Int] = [8, 16, 32]
@@ -254,17 +284,19 @@ VM 和 View 各端读这里,三端 VM 内部仍保留各自的 `playbackRetryAtt
 
 ## 4. 落地顺序
 
-| # | 项 | 估时 | 前置 |
-|---|---|---|---|
-| 0 | §2 `PlaybackTuning` 命名空间 | 0.5d | - |
-| 1 | ① stall 退避 | 0.5d | 0 |
-| 2 | ⑨ `PlaybackEventLog` + Timeline View | 1.5d | 0 |
-| 3 | ② `PlaybackPhase` + recoveryEvent | 1.5d | 1, 2 |
-| 4 | ⑤ `CDNPreferenceStore` + 接入 | 2d | 2(借时间轴验证) |
+| # | 项 | 估时 | 前置 | 状态 |
+|---|---|---|---|---|
+| 0 | §2 `PlaybackTuning` 命名空间 | 0.5d | - | ✅ 已上线 |
+| 1 | ① stall 阈值 | 0.5d | 0 | ✅ 已上线(改为固定 12s,非退避) |
+| 2 | ⑨ `PlaybackEventLog` + Timeline View | 1.5d | 0 | ❌ 未开始 ← **剩余项里应优先** |
+| 3 | ② `PlaybackPhase` + recoveryEvent | 1.5d | 1, 2 | 🟠 部分(有 `PlaybackStatusMachine`,缺细分态与 toast) |
+| 4 | ⑤ `CDNPreferenceStore` + 接入 | 2d | 2(借时间轴验证) | ❌ 未开始 |
 
 **为什么 ⑨ 排前面**:① 和 ⑤ 都需要看数据调参,先把时间轴落了,后面调参不用瞎调。⑤ 上线后用 timeline 验证"重排是否真的命中常用 CDN"也方便。
 
-**总估时**:约 1 周(单人)。
+> ① 已用固定阈值落地,但**「12s 是否合适」本身仍缺数据支撑**——这正是 ⑨ 要提供的。⑨ 的优先级因此不降反升:它既是 ⑤ 的前置,也是回头验证 ① 的唯一手段。
+
+**剩余估时**:约 5 天(⑨ 1.5d + ② 剩余 ~1.5d + ⑤ 2d)。
 
 ---
 

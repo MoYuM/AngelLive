@@ -1,10 +1,30 @@
 # Swift 6 / Sendable 适配现状
 
-审计日期: 2026-04-29
+审计日期: 2026-04-29 · **复核日期: 2026-07-31**
 范围: iOS / macOS / tvOS app + AngelLiveCore + AngelLiveDependencies + SharedAssets
 工作区 .swift 文件数: 268(排除 SPM `.build` 产物)
 
 整体进度估算: **70-75%**。基础设施已切到"渐进路径"档位,核心数据模型 Sendable 化基本完成,服务层 actor 化方向正确,剩余欠账集中在插件子系统和弹幕引擎。
+
+---
+
+> ## ⚠️ 2026-07-31 复核:欠账在扩大,P0 未执行
+>
+> **`@unchecked Sendable` 从 15 处增至 27 处(+12)。** 增量几乎全部来自审计后新写的代码,而非旧账恶化:
+>
+> | 来源 | 新增 | 说明 |
+> |---|---:|---|
+> | DLNA 投屏(新功能) | 6 | `DLNAService` ×2、`DLNAMediaProxy` ×3、`SSDPDiscoverer` ×1 |
+> | DLNA 测试桩 | 2 | `DLNATests` 内 stub/recorder,风险可忽略 |
+> | 收藏同步 | 1 | `FavoriteSyncEngine` |
+> | 插件子系统 | 1 | `PluginSourceManager.ConsoleEntryIdBox` |
+> | 其他桥接 | 2 | `KSPlayerConsoleBridge`、`HostWebSocketSession` |
+>
+> **这说明 P0 一直没做的实际代价**:没有 strict concurrency 基线,新功能默认沿用 `@unchecked` 逃生舱,欠账随功能线性增长。DLNA 这一个功能就贡献了 6 处——若基线在位,其中网络层几处本可以直接写成 `actor`。
+>
+> **P0 的优先级应上调**:它不再只是"看一眼基线",而是**止血**。
+>
+> 其余结论(actor 用对了位置、数据模型已 Sendable、`@preconcurrency` 克制、DanmakuKit 与 `PlayerOptions` 应保留 `@unchecked`)复核后仍然成立。`SWIFT_VERSION` 三端仍以 5.0 为主(tvOS 部分子目标已 6.0)。
 
 ---
 
@@ -31,7 +51,7 @@
 | 指标 | 计数 |
 |---|---|
 | `: Sendable` 显式声明 | 85 |
-| `@unchecked Sendable`(逃生舱) | **15** |
+| `@unchecked Sendable`(逃生舱) | ~~15~~ → **27**(2026-07-31 复核) |
 | `@preconcurrency` | 7 |
 | `@MainActor` | 165 |
 | `nonisolated` | 44 |
@@ -50,16 +70,29 @@
 
 ---
 
-## `@unchecked Sendable` 全部 15 处清单
+## `@unchecked Sendable` 全部 27 处清单(2026-07-31 复核)
 
-### 插件 / JS 子系统(6 处) — `AngelLiveCore`
+行号为复核时实际值,与 4 月审计有偏移。**🆕** 标记 4 月之后新增。
+
+### 插件 / JS 子系统(8 处) — `AngelLiveCore`
 - `LiveParse/Plugin/JSRuntime.swift:4` — `public final class JSRuntime: @unchecked Sendable`(JSContext 包装,串行 DispatchQueue 同步)
 - `LiveParse/Plugin/LiveParsePluginManager.swift:3`
 - `LiveParse/Plugin/LiveParsePluginUpdater.swift:44`
-- `Services/PluginSourceManager.swift:21` — `RemotePluginDisplayItem`
-- `Services/PluginSourceManager.swift:34` — `PluginSourceManager`
+- `Services/PluginSourceManager.swift:38` — `RemotePluginDisplayItem`
+- `Services/PluginSourceManager.swift:51` — `PluginSourceManager`
+- `Services/PluginSourceManager.swift:748` — 内嵌 `ConsoleEntryIdBox` **🆕**
 - `Services/PluginConsoleService.swift:85` — `PluginConsoleService`
 - `Services/PluginAvailabilityService.swift:14` — `PluginAvailabilityService`
+
+### DLNA 投屏(6 处) **🆕 全部为新增** — `AngelLiveDependencies`
+审计后新写的功能,是本次增量的主要来源。网络层若在 strict concurrency 基线下开发,多数可直接写成 `actor`。
+
+- `DLNA/SSDPDiscoverer.swift:11` — `SSDPDiscoverer`(GCDAsyncUdpSocketDelegate 桥接)
+- `DLNA/DLNAService.swift:4` — `DLNAService`
+- `DLNA/DLNAService.swift:104` — `DLNAAVTransportClient`
+- `DLNA/DLNAMediaProxy.swift:135` — `DLNAMediaProxyStore`
+- `DLNA/DLNAMediaProxy.swift:195` — `DLNAMediaProxyHTTPHandler`(NIO ChannelInboundHandler)
+- `DLNA/DLNAMediaProxy.swift:278` — `DLNAProxyUpstreamRequest`(URLSessionDataDelegate)
 
 ### 弹幕引擎(4 处) — `AngelLiveCore/DanmakuKit`(UIKit / CoreAnimation 强耦合)
 - `Core/DanmakuAsyncLayer.swift:31` — `DanmakuAsyncLayer: CALayer`
@@ -67,10 +100,17 @@
 - `Core/DanmakuPlatform.swift:145` — `DanmakuGraphicsContextStack`
 - `Gif/GifAnimator.swift:15` — `GifAnimator`
 
-### 其他(5 处)
+### 测试桩(2 处) **🆕** — 风险可忽略,不计入迁移目标
+- `AngelLiveCoreTests/DLNATests.swift:165` — `StubSSDPDiscoverer`
+- `AngelLiveCoreTests/DLNATests.swift:179` — `RequestRecorder`
+
+### 其他(7 处)
+- `Services/Sync/FavoriteSyncEngine.swift:22` — `FavoriteSyncEngine` **🆕**
 - `Models/PlatformCapability.swift:81` — 内嵌 `Cache`
-- `Services/PlatformCredentialSyncService.swift:622` — 内嵌 `SendState`
+- `Services/PlatformCredentialSyncService.swift:671` — 内嵌 `SendState`
 - `AngelLiveDependencies/Sources/PlayerOptions.swift:4` — `PlayerOptions: KSOptions`(受 KSPlayer 上游限制)
+- `AngelLiveDependencies/.../KSPlayerConsoleBridge.swift:15` — `KSPlayerConsoleBridge: LogHandler` **🆕**
+- `.../HostWebSocketBridge.swift:8` — `HostWebSocketSession` **🆕**
 - `TV/.../RoomInfoViewModel.swift:22` — 内嵌 `LiveFlagTimerHandle`
 
 ---
@@ -118,11 +158,15 @@
 
 ## 收尾路径(按 ROI 排序)
 
-### P0 — 几乎零风险,立即可做
+### P0 — 几乎零风险,立即可做(**2026-07-31 复核后优先级上调**)
 
 **显式开启 strict concurrency 看 baseline**
 
 把 iOS / macOS app target 的 `SWIFT_STRICT_CONCURRENCY = complete` 打开。在 SWIFT_VERSION = 5.0 下这只是警告,不会破坏构建。先看一眼警告基线在哪里。
+
+> **复核后这一项从「摸底」变成「止血」。** 四月至今新增 12 处 `@unchecked Sendable`,其中 DLNA 一个功能占 6 处——因为没有基线,新代码默认走逃生舱最省事。基线开着的话,这些在写的时候就会被警告推向 `actor`。
+>
+> 每晚一天,后面要迁移的量就多一点。**建议在下一个新功能动工前先做掉。**
 
 ### P1 — 逐步推进
 
