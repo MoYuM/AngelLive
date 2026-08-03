@@ -30,7 +30,10 @@ final class Sentinel: Sendable {
 
 }
 
-public class DanmakuAsyncLayer: CALayer, @unchecked Sendable {
+/// 注意:不要给本类标 `@unchecked Sendable`——SDK 把 `CALayer: Sendable` 显式标为
+/// unavailable,子类的 conformance 会被 SIL 层 region 分析忽略(Sema 层却接受),
+/// 等于一个只会误导读者的死声明。跨隔离域传递见下方 `WeakLayerRef`。
+public class DanmakuAsyncLayer: CALayer {
     
     /// When true, it is drawn asynchronously and is ture by default.
     public var displayAsync = true
@@ -102,7 +105,21 @@ public class DanmakuAsyncLayer: CALayer, @unchecked Sendable {
             let opaque = isOpaque
             let backgroundColor = (opaque && self.backgroundColor != nil) ? self.backgroundColor : nil
             let displaying = self.displaying
-            queue.async { [weak self] in
+            let queue = self.queue
+            // CALayer 的 Sendable conformance 被 SDK 标为 unavailable,子类无法自证 Sendable,
+            // 只能用弱引用盒携带 self 穿过绘制队列;盒内引用仅在主 actor 闭包里解包使用,
+            // 与 CALayer 的主线程契约一致。
+            let ref = WeakLayerRef(layer: self)
+            let finish: @MainActor @Sendable (_ image: CGImage?, _ drawn: Bool) -> Void = { image, drawn in
+                guard let self = ref.layer else { return }
+                if drawn, !isCancelled() {
+                    self.contents = image
+                    self.didDisplay?(self, true)
+                } else {
+                    self.didDisplay?(self, false)
+                }
+            }
+            queue.async {
                 guard !isCancelled() else { return }
 #if os(iOS) || os(tvOS)
                 UIGraphicsBeginImageContextWithOptions(size, opaque, scale)
@@ -140,39 +157,21 @@ public class DanmakuAsyncLayer: CALayer, @unchecked Sendable {
 #elseif os(macOS)
                     image.unlockFocus()
 #endif
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.didDisplay?(self, false)
-                    }
+                    DispatchQueue.main.async { finish(nil, false) }
                     return
                 }
 #if os(iOS) || os(tvOS)
-                let image = UIGraphicsGetImageFromCurrentImageContext()
+                let cgImage = UIGraphicsGetImageFromCurrentImageContext()?.danmakuCGImage
                 UIGraphicsEndImageContext()
 #elseif os(macOS)
                 image.unlockFocus()
                 let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
 #endif
                 if isCancelled() {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.didDisplay?(self, false)
-                    }
+                    DispatchQueue.main.async { finish(nil, false) }
                     return
                 }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    if isCancelled() {
-                        self.didDisplay?(self, false)
-                    } else {
-#if os(iOS) || os(tvOS)
-                        self.contents = image?.danmakuCGImage
-#elseif os(macOS)
-                        self.contents = cgImage
-#endif
-                        self.didDisplay?(self, true)
-                    }
-                }
+                DispatchQueue.main.async { finish(cgImage, true) }
             }
             
         } else {
@@ -201,6 +200,12 @@ public class DanmakuAsyncLayer: CALayer, @unchecked Sendable {
         }
     }
     
+    /// 跨隔离域携带 layer 弱引用的转移盒。仅限本文件内、且仅在 `@MainActor` 闭包中解包,
+    /// 禁止外移或在后台队列解包——安全依据是 CALayer 状态只在主线程读写的既有契约。
+    private struct WeakLayerRef: @unchecked Sendable {
+        weak var layer: DanmakuAsyncLayer?
+    }
+
     private static func createPoolIfNeed() {
         guard DanmakuAsyncLayer.pool == nil else { return }
         DanmakuAsyncLayer.pool = DanmakuQueuePool(name: "com.DanmakuKit.DanmakuAsynclayer", queueCount: DanmakuAsyncLayer.drawDanmakuQueueCount, qos: .userInteractive)

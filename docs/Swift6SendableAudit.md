@@ -21,7 +21,8 @@
 | macOS | 88 | **16** | app 层 13 + `DanmakuAsyncLayer` 3 |
 | tvOS | 275 | **44** | `QRCodeViewModel` 16、`RoomInfoViewModel` 13、其余零散 |
 
-`AngelLiveCore` 单独测量:**76 → 3**(只剩 `DanmakuAsyncLayer`)。
+`AngelLiveCore` 单独测量:**76 → 0**(2026-08-03 清掉最后 3 条 `DanmakuAsyncLayer`,
+全量重编实测;各端 app 层数字未重新测量,上表 iOS 的 3 条即来自 Core,现应为 0)。
 三端均 `BUILD SUCCEEDED`、零错误,77 个单测全过。
 
 > **测量注意**:增量构建不会为未改动文件重新输出警告,中途数字会虚低。
@@ -36,10 +37,10 @@
 | `30a0b41` | JSRuntime `requestHeaders` 快照、native stream 提前序列化 |
 | `cdaf308` | `StreamBookmarkService` CloudKit I/O 改 static;`onRemoteChange` 标 `@MainActor`;`FavoriteStateModel` 快照 + Sendable 进度闭包;`LiveState` 标 Sendable;JSRuntime payload 转移盒 |
 | `023e462` | 合并 tvOS `Third/DanmakuKit` 副本到共享引擎;tvOS 主 target 补 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` |
+| (待提交) | `DanmakuAsyncLayer` 最后 3 条清零:三个 main.async 回跳合并为单个 `@MainActor @Sendable` finish 闭包,经文件私有 `WeakLayerRef` 弱引用盒跨队列;摘掉类上无效的 `@unchecked Sendable` 死声明 |
 
 ## 未完成
 
-- `DanmakuAsyncLayer` 3 条(`sending self`,`CALayer` 上游仍 main-actor-only)
 - `GifAnimator` 的 `@unchecked`(拟标 `@MainActor`)
 - **`DanmakuGraphicsContextStack` 疑似真实并发 bug** —— 详见 `DanmakuRenderingRoadmap.md`,应按 bug 单独修
 - 各端 app 层:macOS 13、tvOS 44
@@ -50,8 +51,12 @@
 `@unchecked Sendable` 总数仍为 **27**,但构成变了:摘掉 `Sentinel`(本就多余),
 新增 `JSRuntime.PluginPayloadTransferBox`。**净持平。**
 
-新增的这一个是本次迁移唯一的逃生舱:文件私有、类型文档写明了为何不用 `sending`、
-为何不用 JSON 往返、安全依据(Dictionary 值语义 + payload 契约),并标注禁止外移。
+2026-08-03 再次换血、总数不变:摘掉 `DanmakuAsyncLayer` 类上的死声明
+(被 SIL 分析忽略,见"已证伪"第 3 条),新增文件私有 `WeakLayerRef` 弱引用盒
+(仅主 actor 闭包内解包,注释标明禁止外移)。**仍净持平。**
+
+新增的逃生舱均为文件私有、类型文档写明了替代方案为何走不通、
+安全依据与禁止外移标注。
 
 **全程未使用 `nonisolated(unsafe)`** —— 目标是减少逃生舱,不是换个马甲。
 
@@ -64,6 +69,15 @@
 2. **给 `withTaskGroup` 的 body 标 `@Sendable`** —— 它随即无法捕获
    `platformStats` / `fetchedModels` 等可变局部变量,1 条变 14 条。
    正解是固化不可变快照 + 把 actor 状态回写抽成独立的 `@Sendable` 闭包。
+3. **给 `CALayer` 子类标 `@unchecked Sendable`** —— SDK 把 `CALayer: Sendable`
+   显式标为 unavailable(可用 `let _: any Sendable = CALayer()` 探针验证,
+   报 "conformance … is unavailable"),子类的 conformance 在 Sema 层被接受、
+   在 SIL 层 region isolation 分析中被上游 unavailable conformance 压掉,
+   即 `sending self` 警告照发。这也意味着"单次移交 self 给主 actor 闭包"的
+   正规修法对 CALayer 子类同样走不通(self 属调用方 region,CA 在方法返回后
+   仍持有使用)。唯一出路是弱引用盒,只在 `@MainActor` 闭包内解包。
+   另注意:`sending` 系诊断产生于 SIL 阶段,`swiftc -typecheck` 跑不到,
+   用 typecheck 做探针会得到假阴性,必须 `-c` 全编。
 
 ## 流程教训
 
@@ -82,6 +96,9 @@
    (历史问题路径)、刷新进度是否仍逐条更新。场景:两台设备互相增删。
 3. **tvOS 弹幕观感**:合并后选轨是否仍顶部优先、切字号时在飞弹幕行为
    (共享版与旧副本此处行为不同)、GIF 弹幕、`MAX_FLOAT_X` 改动。
+4. **弹幕异步绘制回跳合并**(`DanmakuAsyncLayer` finish 闭包重构):
+   高频弹幕下取消路径是否正常(快速滚动/清屏时无残影、无漏回调),
+   三个回跳点合并后 `didDisplay` 语义与原版一致性。场景:高密度直播间开满弹幕。
 
 ---
 
