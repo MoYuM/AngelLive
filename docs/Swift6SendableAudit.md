@@ -47,7 +47,9 @@
 ## 未完成
 
 - `GifAnimator` 的 `@unchecked`(拟标 `@MainActor`)
-- **`DanmakuGraphicsContextStack` 疑似真实并发 bug** —— 详见 `DanmakuRenderingRoadmap.md`,应按 bug 单独修
+- ~~`DanmakuGraphicsContextStack` 疑似并发 bug~~ —— 2026-08-03 复核为死代码
+  (shim 只在 macOS 编译,调用方全在 iOS/tvOS 分支),已整体删除,
+  详见 `DanmakuRenderingRoadmap.md` §8;`@unchecked Sendable` 账目 27 → **26**
 - 各端 app 层:macOS 13、tvOS 44
 - Phase 5 翻开关:`AngelLiveCore` 摘 `.swiftLanguageMode(.v5)`、三端 `SWIFT_VERSION` → 6.0
 

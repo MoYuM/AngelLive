@@ -234,24 +234,23 @@ tvOS 原先在 `TV/AngelLiveTVOS/Third/DanmakuKit/` 维护一份与 `AngelLiveCo
 
 ---
 
-## 8. 待修:`DanmakuGraphicsContextStack` 疑似并发 bug
+## 8. 已解决:`DanmakuGraphicsContextStack` 并发 bug(以删除死代码收场)
 
-> 状态:**未修** · 发现于 2026-08-01 的 Swift 6 迁移过程中 · 与迁移无关,是独立缺陷
+> 状态:**已解决(2026-08-03)** · 发现于 2026-08-01 的 Swift 6 迁移过程中
 
-`Core/DanmakuPlatform.swift` 里的 `danmakuContextStack` 是一个**全局共享**的 push/current/pop 栈,用来模拟 `UIGraphicsBeginImageContextWithOptions` 的上下文栈语义:
+原始判断:全局共享 push/current/pop 栈模拟 `UIGraphicsBeginImageContextWithOptions`
+语义,而绘制分摊在 16 条并发队列,`NSLock` 只防崩不防语义,线程 A 的 `current()`
+可能拿到线程 B 刚 push 的 context → 偶发串图。竞态分析成立。
 
-```swift
-private let danmakuContextStack = DanmakuGraphicsContextStack()
-```
+**但复核发现影响面判断有误**:该 shim 位于 `#if os(macOS)` 分支,而调用方
+`DanmakuAsyncLayer` 的 UIGraphics 调用全部在 `#if os(iOS) || os(tvOS)` 分支
+(走 UIKit 原生实现,UIKit 的上下文栈本来就是线程本地的);macOS 分支自移植起
+(`9a3e3e7`)就走 `NSImage.lockFocus` 路线。**shim 全仓库零调用,是死代码,
+竞态从未实际触发**。原文"影响面扩大到三端"不成立。
 
-但 `DanmakuAsyncLayer` 的绘制分摊在 **16 条并发队列**(`drawDanmakuQueueCount = 16`)。
-
-`NSLock` 只保证栈操作本身不崩溃,**不保证语义正确**:线程 A 的 `current()` 完全可能拿到线程 B 刚 push 的 context。
-
-- **表现**:偶发的弹幕绘制错乱 / 串图,而非崩溃,极难归因。
-- **正确修法**:改成线程本地存储(TLS / `@TaskLocal`),**不是**给它套个 `Sendable` 注解。
-- **影响面**:该文件是 iOS/macOS 的平台 shim,tvOS 旧副本没有此文件;引擎单一化后 tvOS 也走这条路径,影响面扩大到三端。
-- 建议按 bug 单独提交,commit message 写清竞态成因。
+处置:整体删除(struct + 栈类 + 全局实例 + 4 个 UIGraphics* 函数),原位留注释
+说明历史与"未来如需重建必须线程本地实现"。顺带减少一处 `@unchecked Sendable`
+(27 → 26)。教训:分析并发 bug 前先确认代码可达性。
 
 ## 9. 待真机验收:引擎单一化后的 tvOS 观感
 

@@ -136,73 +136,12 @@ public extension NSColor {
     }
 }
 
-private struct DanmakuGraphicsContext {
-    let context: CGContext
-    let size: CGSize
-    let scale: CGFloat
-}
-
-private final class DanmakuGraphicsContextStack: @unchecked Sendable {
-    private var stack: [DanmakuGraphicsContext] = []
-    private let lock = NSLock()
-
-    func push(_ state: DanmakuGraphicsContext) {
-        lock.lock()
-        stack.append(state)
-        lock.unlock()
-    }
-
-    func current() -> DanmakuGraphicsContext? {
-        lock.lock()
-        let value = stack.last
-        lock.unlock()
-        return value
-    }
-
-    @discardableResult
-    func pop() -> DanmakuGraphicsContext? {
-        lock.lock()
-        let value = stack.popLast()
-        lock.unlock()
-        return value
-    }
-}
-
-private let danmakuContextStack = DanmakuGraphicsContextStack()
-
-func UIGraphicsBeginImageContextWithOptions(_ size: CGSize, _ opaque: Bool, _ scale: CGFloat) {
-    let resolvedScale = scale == 0 ? danmakuScreenScale() : scale
-    let width = max(Int(size.width * resolvedScale), 1)
-    let height = max(Int(size.height * resolvedScale), 1)
-    guard let context = CGContext(
-        data: nil,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-    ) else { return }
-    context.scaleBy(x: resolvedScale, y: resolvedScale)
-    context.translateBy(x: 0, y: size.height)
-    context.scaleBy(x: 1, y: -1)
-    danmakuContextStack.push(DanmakuGraphicsContext(context: context, size: size, scale: resolvedScale))
-}
-
-func UIGraphicsGetCurrentContext() -> CGContext? {
-    danmakuContextStack.current()?.context
-}
-
-func UIGraphicsGetImageFromCurrentImageContext() -> NSImage? {
-    guard let state = danmakuContextStack.current(),
-          let cgImage = state.context.makeImage() else { return nil }
-    let nsSize = NSSize(width: state.size.width, height: state.size.height)
-    return NSImage(cgImage: cgImage, size: nsSize)
-}
-
-func UIGraphicsEndImageContext() {
-    _ = danmakuContextStack.pop()
-}
+// 注:此处曾有一套模拟 UIGraphicsBeginImageContextWithOptions 语义的 macOS shim
+// (全局 DanmakuGraphicsContextStack + 4 个 UIGraphics* 函数)。macOS 的
+// DanmakuAsyncLayer 自移植起即走 NSImage.lockFocus 路线,shim 全仓库零调用,
+// 且其"全局共享栈 + 16 条并发绘制队列"的设计存在拿错 context 的竞态
+// (NSLock 只防崩不防语义,正解本应是线程本地栈,如 UIKit 原生实现)。
+// 死代码不修,已整体删除;若未来 macOS 需要 UIGraphics 风格 shim,必须按线程本地实现。
 #endif
 
 #if os(iOS) || os(tvOS)
