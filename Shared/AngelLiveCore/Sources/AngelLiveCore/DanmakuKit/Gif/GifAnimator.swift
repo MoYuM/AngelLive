@@ -9,10 +9,16 @@
 import Foundation
 import ImageIO
 import QuartzCore
+import os.lock
 
 /// This is a class for managing GIF animations.
 /// If you want to customize GIF DanmakuCell, you can refer to this class or use it.
-public class GifAnimator: @unchecked Sendable {
+///
+/// 隔离模型:公开 API(prepare/start/stop/回调)全部主线程驱动(CADisplayLink 挂 .main,
+/// 调用方 DanmakuGifCell 是 UIView 世界),故类收口 @MainActor;帧解码在后台队列进行,
+/// 只经由 nonisolated static 函数 + 值快照 + Sendable 的 SafeArray 交互,不回触 self。
+@MainActor
+public class GifAnimator {
     /// Total animation frames.
     public private(set) var frameCount: Int = 0
     /// The duration of an animation loop.
@@ -43,13 +49,33 @@ public class GifAnimator: @unchecked Sendable {
     private var timeSinceLastFrameChange: TimeInterval = 0.0
     private var previousFrameIndex = 0 {
         didSet {
-            queue.async { [weak self] in
-                autoreleasepool { self?.updatePreloadedFrames() }
+            // 在主 actor 上固化快照,后台只做解码与写入 Sendable 容器
+            let frames = self.frames
+            let previousIndex = previousFrameIndex
+            let preloadIndexes = preloadIndexes(start: currentFrameIndex)
+            let source = ImageSourceBox(source: imageSource)
+            let imageSize = self.imageSize
+            let backgroundDecode = self.backgroundDecode
+            queue.async {
+                autoreleasepool {
+                    frames[previousIndex] = frames[previousIndex]?.placeholderFrame
+                    for index in preloadIndexes {
+                        guard let currentFrame = frames[index], currentFrame.isPlaceholder else { continue }
+                        let image = Self.frame(at: index, source: source.source, imageSize: imageSize, backgroundDecode: backgroundDecode)
+                        frames[index] = GifFrame(image: image, duration: currentFrame.duration)
+                    }
+                }
             }
         }
     }
     private var isReachMaxRepeatCount: Bool { currentRepeatCount >= maxRepeatCount }
-    nonisolated(unsafe) private static var pool: DanmakuQueuePool?
+    private static var pool: DanmakuQueuePool?
+
+    /// ImageIO 明确保证 CGImageSource 可跨线程使用,但 SDK 未标注 Sendable;
+    /// 此盒仅用于把 imageSource 递交给解码队列,禁止外移、禁止承载其他类型。
+    private struct ImageSourceBox: @unchecked Sendable {
+        let source: CGImageSource
+    }
 
     public init(imageSource source: CGImageSource,
                 preloadCount count: Int,
@@ -63,7 +89,8 @@ public class GifAnimator: @unchecked Sendable {
         maxRepeatCount = repeatCount
     }
 
-    deinit {
+    // 持有方 DanmakuGifCell 在主线程释放,isolated deinit 只是把事实告知编译器
+    isolated deinit {
         displayLink.invalidate()
     }
 
@@ -71,8 +98,31 @@ public class GifAnimator: @unchecked Sendable {
     public func prepare() {
         frameCount = CGImageSourceGetCount(imageSource)
         frames.reserveCapacity(frameCount)
+        let frames = self.frames
+        let frameCount = self.frameCount
+        let maxFrameDuration = self.maxFrameDuration
+        let preloadCount = self.preloadCount
+        let source = ImageSourceBox(source: imageSource)
+        let imageSize = self.imageSize
+        let backgroundDecode = self.backgroundDecode
         queue.async { [weak self] in
-            self?.setupAsync()
+            frames.removeAll()
+            var duration: TimeInterval = 0
+            for i in 0..<frameCount {
+                let frameDuration = Self.getFrameDuration(from: source.source, at: i)
+                duration += min(frameDuration, maxFrameDuration)
+                if i > preloadCount {
+                    frames.append(GifFrame(image: nil, duration: frameDuration))
+                    break
+                } else {
+                    let image = Self.frame(at: i, source: source.source, imageSize: imageSize, backgroundDecode: backgroundDecode)
+                    frames.append(GifFrame(image: image, duration: frameDuration))
+                }
+            }
+            let loopDuration = duration
+            Task { @MainActor in
+                self?.loopDuration = loopDuration
+            }
         }
     }
 
@@ -83,22 +133,6 @@ public class GifAnimator: @unchecked Sendable {
     public func stopAnimation() {
         displayLink.isPaused = true
         didFinishAnimation?()
-    }
-
-    private func setupAsync() {
-        frames.removeAll()
-        var duration: TimeInterval = 0
-        for i in 0..<frameCount {
-            let frameDuration = GifAnimator.getFrameDuration(from: imageSource, at: i)
-            duration += min(frameDuration, maxFrameDuration)
-            if i > preloadCount {
-                frames.append(GifFrame(image: nil, duration: frameDuration))
-                break
-            } else {
-                frames.append(GifFrame(image: frame(at: i), duration: frameDuration))
-            }
-        }
-        loopDuration = duration
     }
 
     private func onScreenUpdate() {
@@ -123,7 +157,7 @@ public class GifAnimator: @unchecked Sendable {
         update?(currentFrameImage)
     }
 
-    private func frame(at index: Int) -> CGImage? {
+    private nonisolated static func frame(at index: Int, source: CGImageSource, imageSize: CGSize, backgroundDecode: Bool) -> CGImage? {
         let resize = imageSize != .zero
         let options: [CFString: Any]?
         if resize {
@@ -136,13 +170,13 @@ public class GifAnimator: @unchecked Sendable {
         } else {
             options = nil
         }
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, index, options as CFDictionary?) else {
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary?) else {
             return nil
         }
         return backgroundDecode ? decodedImage(from: cgImage) : cgImage
     }
 
-    private func decodedImage(from cgImage: CGImage) -> CGImage? {
+    private nonisolated static func decodedImage(from cgImage: CGImage) -> CGImage? {
         let width = cgImage.width
         let height = cgImage.height
         let colorSpace = cgImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
@@ -160,14 +194,6 @@ public class GifAnimator: @unchecked Sendable {
         return context.makeImage()
     }
 
-    private func updatePreloadedFrames() {
-        frames[previousFrameIndex] = frames[previousFrameIndex]?.placeholderFrame
-        preloadIndexes(start: currentFrameIndex).forEach { index in
-            guard let currentFrame = frames[index], currentFrame.isPlaceholder else { return }
-            frames[index] = GifFrame(image: frame(at: index), duration: currentFrame.duration)
-        }
-    }
-
     private func increment(frameIndex: Int, by value: Int = 1) -> Int {
         (frameIndex + value) % frameCount
     }
@@ -182,7 +208,7 @@ public class GifAnimator: @unchecked Sendable {
         }
     }
 
-    private static func getFrameDuration(from imageSource: CGImageSource, at index: Int) -> TimeInterval {
+    private nonisolated static func getFrameDuration(from imageSource: CGImageSource, at index: Int) -> TimeInterval {
         guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, index, nil) as? [String: Any] else { return 0.0 }
         let defaultFrameDuration = 0.1
         guard let gifInfo = properties[kCGImagePropertyGIFDictionary as String] as? [String: Any] else { return defaultFrameDuration }
@@ -214,13 +240,15 @@ public class GifAnimator: @unchecked Sendable {
 // MARK: GifFrame
 
 extension GifAnimator {
-    struct GifFrame {
+    struct GifFrame: Sendable {
         let image: CGImage?
         let duration: TimeInterval
         var isPlaceholder: Bool { image == nil }
         var placeholderFrame: GifFrame { GifFrame(image: nil, duration: duration) }
     }
 
+    // CADisplayLink 挂在 .main RunLoop,selector 必在主线程触发
+    @MainActor
     class TargetProxy: NSObject {
         private weak var target: GifAnimator?
         init(target: GifAnimator) { self.target = target }
@@ -230,41 +258,38 @@ extension GifAnimator {
     }
 }
 
-fileprivate class SafeArray<Element> {
-    private var array: Array<Element> = []
-    private let lock = NSLock()
+/// 后台解码队列与主线程共享的帧容器。内部状态全部收在 `OSAllocatedUnfairLock` 里,
+/// 该类型自身即 `Sendable`,故无需 `@unchecked` 逃生舱(与 `Sentinel` 同款)。
+fileprivate final class SafeArray<Element: Sendable>: Sendable {
+    private let storage = OSAllocatedUnfairLock(initialState: [Element]())
 
     subscript(index: Int) -> Element? {
         get {
-            lock.lock(); defer { lock.unlock() }
-            return array.indices ~= index ? array[index] : nil
+            storage.withLock { $0.indices ~= index ? $0[index] : nil }
         }
         set {
-            lock.lock(); defer { lock.unlock() }
-            if let newValue = newValue, array.indices ~= index {
-                array[index] = newValue
+            storage.withLock {
+                if let newValue = newValue, $0.indices ~= index {
+                    $0[index] = newValue
+                }
             }
         }
     }
 
     var count: Int {
-        lock.lock(); defer { lock.unlock() }
-        return array.count
+        storage.withLock { $0.count }
     }
 
     func reserveCapacity(_ count: Int) {
-        lock.lock(); defer { lock.unlock() }
-        array.reserveCapacity(count)
+        storage.withLock { $0.reserveCapacity(count) }
     }
 
     func append(_ element: Element) {
-        lock.lock(); defer { lock.unlock() }
-        array += [element]
+        storage.withLock { $0.append(element) }
     }
 
     func removeAll() {
-        lock.lock(); defer { lock.unlock() }
-        array = []
+        storage.withLock { $0 = [] }
     }
 }
 #endif
