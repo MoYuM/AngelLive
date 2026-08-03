@@ -50,7 +50,10 @@ final class RemoteInputService {
             self.listener = listener
 
             listener.newConnectionHandler = { [weak self] connection in
-                self?.handle(connection: connection)
+                // 回调在 listener 的 utility 队列上,跳回主 actor 处理(NWConnection 是 Sendable)
+                Task { @MainActor in
+                    self?.handle(connection: connection)
+                }
             }
 
             listener.stateUpdateHandler = { [weak self] state in
@@ -92,9 +95,13 @@ final class RemoteInputService {
                 return
             }
 
+            // 回调在 connection 的 utility 队列上,解析与响应跳回主 actor
+            // (lastEvent 等状态是 main-actor 隔离;String/NWConnection 均 Sendable)
             let raw = String(data: data, encoding: .utf8) ?? ""
-            let response = self.processRequest(raw)
-            self.sendResponse(connection: connection, body: response)
+            Task { @MainActor in
+                let response = self.processRequest(raw)
+                self.sendResponse(connection: connection, body: response)
+            }
         }
     }
 

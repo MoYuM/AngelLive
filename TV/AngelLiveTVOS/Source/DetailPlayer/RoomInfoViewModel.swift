@@ -19,10 +19,13 @@ enum PlayerDisplayState {
     case streamerOffline  // 主播已下播
 }
 
+/// 跨 @Sendable 闭包携带 Timer 弱引用的句柄。所有成员都收口 @MainActor,
+/// @unchecked Sendable 仅用于让句柄能被回调闭包捕获,不承载跨线程访问。
 private final class LiveFlagTimerHandle: @unchecked Sendable {
     private weak var timer: Timer?
 
-    init(timer: Timer) {
+    @MainActor
+    func attach(_ timer: Timer?) {
         self.timer = timer
     }
 
@@ -436,7 +439,7 @@ final class RoomInfoViewModel {
                     throw LiveParseError.liveParseError("不支持的平台", "\(currentRoom.liveType)")
                 }
                 let playArgs = try await LiveParseJSPlatformManager.getPlayArgs(platform: platform, roomId: currentRoom.roomId, userId: currentRoom.userId)
-                await updateCurrentRoomPlayArgs(playArgs)
+                updateCurrentRoomPlayArgs(playArgs)
             } catch {
                 await MainActor.run {
                     isLoading = false
@@ -478,21 +481,25 @@ final class RoomInfoViewModel {
                 let roomId = currentRoom.roomId
                 let userId = currentRoom.userId
                 let liveType = currentRoom.liveType
-                liveFlagTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(appViewModel.playerSettingsViewModel.openExitPlayerViewWhenLiveEndSecond), repeats: true) { timer in
-                    let timerHandle = LiveFlagTimerHandle(timer: timer)
-                    Task {
-                        do {
-                            let state = try await ApiManager.getCurrentRoomLiveState(roomId: roomId, userId: userId, liveType: liveType)
-                            guard state == .close || state == .unknow else { return }
-                            await MainActor.run {
+                // 句柄先于计时器在主 actor 上创建,回调闭包只捕获 Sendable 的句柄,
+                // 避免非 Sendable 的 timer 参数跨 region 传递。
+                let timerHandle = LiveFlagTimerHandle()
+                liveFlagTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(appViewModel.playerSettingsViewModel.openExitPlayerViewWhenLiveEndSecond), repeats: true) { _ in
+                    // 线程前提:scheduledTimer 挂在当前(主)RunLoop,回调必在主线程,判断错误会 trap。
+                    MainActor.assumeIsolated {
+                        _ = Task {
+                            do {
+                                let state = try await ApiManager.getCurrentRoomLiveState(roomId: roomId, userId: userId, liveType: liveType)
+                                guard state == .close || state == .unknow else { return }
                                 NotificationCenter.default.post(name: SimpleLiveNotificationNames.playerEndPlay, object: nil, userInfo: nil)
+                                timerHandle.invalidate()
+                            } catch {
+                                print("检查直播状态失败:\(error)")
                             }
-                            await timerHandle.invalidate()
-                        } catch {
-                            print("检查直播状态失败:\(error)")
                         }
                     }
                 }
+                timerHandle.attach(liveFlagTimer)
             }
         }
 
@@ -825,14 +832,17 @@ extension RoomInfoViewModel: KSPlayerLayerDelegate {
     func startTimer() {
         contolTimer?.invalidate() // 停止之前的计时器
         contolTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            if self.controlViewOptionSecond > 0 {
-                self.controlViewOptionSecond -= 1
-            } else {
-                self.showControl = false
-                if self.onceTips == false {
-                    self.showTips = true
+            // 线程前提:scheduledTimer 挂在当前(主)RunLoop,回调必在主线程,判断错误会 trap。
+            MainActor.assumeIsolated {
+                if self.controlViewOptionSecond > 0 {
+                    self.controlViewOptionSecond -= 1
+                } else {
+                    self.showControl = false
+                    if self.onceTips == false {
+                        self.showTips = true
+                    }
+                    self.contolTimer?.invalidate() // 计时器停止
                 }
-                self.contolTimer?.invalidate() // 计时器停止
             }
         }
     }
@@ -845,11 +855,14 @@ extension RoomInfoViewModel: KSPlayerLayerDelegate {
         tipOptionSecond = 3 // 重置计时器
 
         tipsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            if self.tipOptionSecond > 0 {
-                self.tipOptionSecond -= 1
-            } else {
-                self.showTips = false
-                self.tipsTimer?.invalidate() // 计时器停止
+            // 线程前提:scheduledTimer 挂在当前(主)RunLoop,回调必在主线程,判断错误会 trap。
+            MainActor.assumeIsolated {
+                if self.tipOptionSecond > 0 {
+                    self.tipOptionSecond -= 1
+                } else {
+                    self.showTips = false
+                    self.tipsTimer?.invalidate() // 计时器停止
+                }
             }
         }
     }

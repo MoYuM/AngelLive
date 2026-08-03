@@ -236,7 +236,10 @@ extension FavoriteMainView {
     
     func startTimer() {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            second += 1
+            // 线程前提:scheduledTimer 挂在当前(主)RunLoop,回调必在主线程,判断错误会 trap。
+            MainActor.assumeIsolated {
+                second += 1
+            }
         }
         timer?.fire()
     }

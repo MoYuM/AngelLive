@@ -9,7 +9,9 @@
 import Foundation
 import AngelLiveCore
 
-enum PluginAppGroupSync {
+// 纯文件系统操作,不触碰任何 main-actor 状态;标 nonisolated 使其可以从
+// 缓存清理等后台 @Sendable 闭包中直接调用。
+nonisolated enum PluginAppGroupSync {
 
     static let appGroupIdentifier = "group.dev.idog.angellivetvos"
 

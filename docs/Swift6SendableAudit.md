@@ -17,9 +17,12 @@
 
 | | 基线 | 当前 | 剩余分布 |
 |---|---:|---:|---|
-| iOS | 82 | **0**(推算) | `DanmakuAsyncLayer` 3 条已清,未单独全量复测 |
+| iOS | 82 | **0**(推算) | `DanmakuAsyncLayer` 3 条与 `DeviceName` 2 条已清,未单独全量复测 |
 | macOS | 88 | **0**(实测) | app 层 13 条于 2026-08-03 清零,全量重编确认 |
-| tvOS | 275 | **44** | `QRCodeViewModel` 16、`RoomInfoViewModel` 13、其余零散 |
+| tvOS | 275 | **0**(实测) | 末批 42 条(实测,原记 44)于 2026-08-03 清零,全量重编确认 |
+
+> tvOS 末批里有 2 条藏在 Core `DeviceName.swift` 的 iOS/tvOS 条件编译分支中,
+> 宿主为 macOS 的 `swift build` 测不到——**Core 的"0 警告"必须以 iOS/tvOS 构建复核**。
 
 `AngelLiveCore` 单独测量:**76 → 0**(2026-08-03 清掉最后 3 条 `DanmakuAsyncLayer`,
 全量重编实测;各端 app 层数字未重新测量,上表 iOS 的 3 条即来自 Core,现应为 0)。
@@ -37,12 +40,13 @@
 | `30a0b41` | JSRuntime `requestHeaders` 快照、native stream 提前序列化 |
 | `cdaf308` | `StreamBookmarkService` CloudKit I/O 改 static;`onRemoteChange` 标 `@MainActor`;`FavoriteStateModel` 快照 + Sendable 进度闭包;`LiveState` 标 Sendable;JSRuntime payload 转移盒 |
 | `023e462` | 合并 tvOS `Third/DanmakuKit` 副本到共享引擎;tvOS 主 target 补 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` |
-| (待提交) | `DanmakuAsyncLayer` 最后 3 条清零:三个 main.async 回跳合并为单个 `@MainActor @Sendable` finish 闭包,经文件私有 `WeakLayerRef` 弱引用盒跨队列;摘掉类上无效的 `@unchecked Sendable` 死声明 |
+| `d6d23cb` | `DanmakuAsyncLayer` 最后 3 条清零:三个 main.async 回跳合并为单个 `@MainActor @Sendable` finish 闭包,经文件私有 `WeakLayerRef` 弱引用盒跨队列;摘掉类上无效的 `@unchecked Sendable` 死声明 |
+| `6e3990e` | macOS app 层 13 条清零:三处 NSView 子类 `isolated deinit`,三处主线程回调(NC `queue:.main`、主 RunLoop Timer)`assumeIsolated` |
+| (待提交) | tvOS 末批 42 条清零:`QRCodeActor` 从自定义 actor 收口 `@MainActor class`(其依赖在默认 MainActor 下全在主 actor,自定义隔离域只产跨域警告);三处主 RunLoop Timer `assumeIsolated`;NWListener utility 队列回调改 `Task { @MainActor }` 跳转(不能 assumeIsolated,会 trap);`UserDefaults` 扩展删多余私有队列(其本身线程安全);`PluginAppGroupSync` 标 nonisolated;TopShelf `@preconcurrency import` + nonisolated init;Core `currentDeviceName()` 收口 `@MainActor` |
 
 ## 未完成
 
 - `GifAnimator` 的 `@unchecked`(拟标 `@MainActor`)
-- tvOS app 层 44 条(`QRCodeViewModel` 16、`RoomInfoViewModel` 13、其余零散)
 - **`DanmakuGraphicsContextStack` 疑似真实并发 bug** —— 详见 `DanmakuRenderingRoadmap.md`,应按 bug 单独修
 - 各端 app 层:macOS 13、tvOS 44
 - Phase 5 翻开关:`AngelLiveCore` 摘 `.swiftLanguageMode(.v5)`、三端 `SWIFT_VERSION` → 6.0
@@ -100,6 +104,11 @@
 4. **弹幕异步绘制回跳合并**(`DanmakuAsyncLayer` finish 闭包重构):
    高频弹幕下取消路径是否正常(快速滚动/清屏时无残影、无漏回调),
    三个回跳点合并后 `didDisplay` 语义与原版一致性。场景:高密度直播间开满弹幕。
+5. **tvOS 收口批次**:二维码同步服务(启动/扫码/收请求/关闭,`QRCodeActor`
+   已从 actor 改 `@MainActor class`,`stopSyncServer` 从 detached Task 改同步直调)、
+   遥控器网页输入(NWListener 回调改 Task 跳转,注意输入延迟)、
+   控制层/提示条自动隐藏计时、退出播放检测(`LiveFlagTimerHandle` 改先建后挂)、
+   TopShelf 刷新。
 
 ---
 

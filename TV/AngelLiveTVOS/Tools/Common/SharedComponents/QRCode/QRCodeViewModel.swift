@@ -28,9 +28,7 @@ enum SimpleLiveSyncTaskState: CustomStringConvertible {
 
 @Observable
 class QRCodeViewModel {
-    
-    @MainActor
-    
+
     private let actor = QRCodeActor()
     // 是否收到同步请求、 提示文字、 同步类型、 是否需要覆盖、 房间列表
     var currentState: (Bool, String, SimpleSyncType, Bool, [LiveModel]) = (false, "", .favorite, false, [])
@@ -51,7 +49,7 @@ class QRCodeViewModel {
                     // 创建一个异步任务来处理进度更新
                     progressTask = Task { @MainActor in
                         while !Task.isCancelled {
-                            currentState = await actor.getCurrentState()
+                            currentState = actor.getCurrentState()
                             message = currentState.1
                             try? await Task.sleep(nanoseconds: 100_000_000)
                         }
@@ -71,19 +69,19 @@ class QRCodeViewModel {
     
     @MainActor
     private func generateQRCode() async -> UIImage? {
-        if let image = await actor.generateQRCode(url: qrcodeUrl) {
+        if let image = actor.generateQRCode(url: qrcodeUrl) {
             return image
         }
         return nil
     }
-    
+
     func setupSyncServer() async {
-        let resp = await actor.setupSyncServer()
+        let resp = actor.setupSyncServer()
         qrcodeUrl = resp
     }
-    
+
     func startSyncTask(appViewModel: AppState) async {
-        await actor.resetMessage()
+        actor.resetMessage()
         currentTaskState = .cleanOld
         fullScreenLoading = true
         let syncType = currentState.2
@@ -141,7 +139,7 @@ class QRCodeViewModel {
     }
     
     func resetSyncTaskState() async {
-        await actor.resetCurrentState()
+        actor.resetCurrentState()
         favoriteSyncTaskStart = false
         fullScreenLoading = false
         currentState = (false, "", .favorite, false, [])
@@ -149,11 +147,7 @@ class QRCodeViewModel {
 
     func stopSyncServer() {
         progressTask?.cancel()
-        // 使用弱引用来避免循环引用
-        let actorRef = actor
-        Task.detached {
-            await actorRef.closeServer()
-        }
+        actor.closeServer()
         Logger.debug("停止", category: .ui)
     }
     
@@ -167,7 +161,12 @@ class QRCodeViewModel {
     }
 }
 
-@preconcurrency actor QRCodeActor: SyncManagerDelegate {
+/// 原为自定义 actor,但其全部依赖(Common 工具、httpPort、SyncManager、UDPListener)
+/// 在 tvOS 主 target 默认 MainActor 隔离下都落在主 actor,自定义隔离域没有并发收益,
+/// 只制造跨域警告,故收口为 @MainActor class(名字保留以减小 diff)。
+/// SyncManager 的 delegate 回调仍可能从网络线程进入,经 nonisolated + Task 跳回主 actor。
+@MainActor
+final class QRCodeActor: SyncManagerDelegate {
     
     private var qrcode_url = ""
     private var message = ""
@@ -220,13 +219,15 @@ class QRCodeViewModel {
     
     nonisolated func syncManagerDidConnectError(error: any Error) {
        Task { @MainActor in
-           await self.updateMessage("服务启动失败，错误原因\(error.localizedDescription)，如果错误原因为端口占用，请关闭App几分钟后再试。")
+           self.updateMessage("服务启动失败，错误原因\(error.localizedDescription)，如果错误原因为端口占用，请关闭App几分钟后再试。")
        }
     }
 
     nonisolated func syncManagerDidReciveRequest(type: SimpleSyncType, needOverlay: Bool, info: Any) {
+       // info 是非 Sendable 的 Any,在跳主 actor 前先在本上下文固化为 Sendable 的 [LiveModel]
+       let rooms = info as? [LiveModel] ?? []
        Task { @MainActor in
-           await self.updateSyncState(type: type, needOverlay: needOverlay, info: info)
+           self.updateSyncState(type: type, needOverlay: needOverlay, rooms: rooms)
        }
     }
 
@@ -236,11 +237,11 @@ class QRCodeViewModel {
     }
 
     // 新增一个隔离方法来更新同步状态
-    func updateSyncState(type: SimpleSyncType, needOverlay: Bool, info: Any) {
+    func updateSyncState(type: SimpleSyncType, needOverlay: Bool, rooms: [LiveModel]) {
        self.startSyncTask = true
        self.syncType = type
        self.needOverlay = needOverlay
-       self.roomList = info as? [LiveModel] ?? []
+       self.roomList = rooms
        self.message = "收到\(type.description)请求，本次请求\(needOverlay ? "会" : "不会")覆盖你之前的数据。您确认要同步吗？"
     }
 }

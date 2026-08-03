@@ -11,6 +11,9 @@ import UIKit
 #endif
 
 /// 跨平台当前设备名:iOS/tvOS=UIDevice.current.name,macOS=Host.current().localizedName。
+/// UIDevice.current 是 main-actor 隔离,故整个函数收口 @MainActor;
+/// 现有调用方均为同步 UI 上下文(iOS SyncView / macOS MacSyncManagementView)。
+@MainActor
 public func currentDeviceName() -> String {
     #if os(iOS) || os(tvOS)
     return UIDevice.current.name

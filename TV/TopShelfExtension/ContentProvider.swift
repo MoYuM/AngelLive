@@ -5,10 +5,15 @@
 //  Created by pangchong on 12/12/25.
 //
 
-import TVServices
+@preconcurrency import TVServices
 import AngelLiveCore
 
 class ContentProvider: TVTopShelfContentProvider {
+
+    // 基类 init 是 nonisolated,显式对齐,避免默认 MainActor 隔离下的重写隔离不匹配
+    nonisolated override init() {
+        super.init()
+    }
 
     /// 整体超时时间（秒）
     private let totalTimeout: TimeInterval = 20
