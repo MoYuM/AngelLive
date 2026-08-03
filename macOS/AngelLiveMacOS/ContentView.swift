@@ -379,7 +379,8 @@ private struct SidebarWidthEnforcer: NSViewRepresentable {
             applySoon()
         }
 
-        deinit {
+        // NSView 释放在主线程,isolated deinit 使其可同步调用 main-actor 方法。
+        isolated deinit {
             removeObservers()
         }
 
@@ -398,7 +399,10 @@ private struct SidebarWidthEnforcer: NSViewRepresentable {
             ]
             for name in names {
                 let token = nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    self?.apply()
+                    // 线程前提:queue: .main 保证回调在主线程,判断错误会 trap。
+                    MainActor.assumeIsolated {
+                        self?.apply()
+                    }
                 }
                 observers.append(token)
             }

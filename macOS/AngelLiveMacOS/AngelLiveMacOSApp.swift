@@ -237,7 +237,9 @@ private final class PlayerWindowChromeNSView: NSView {
         window.isMovableByWindowBackground = allowsBackgroundDrag
     }
 
-    deinit {
+    // NSView 的释放发生在主线程,isolated deinit 把这一事实告知编译器,
+    // 使 deinit 内可同步恢复 main-actor 隔离的窗口状态。
+    isolated deinit {
         guard let state = previousState else { return }
         state.window.standardWindowButton(.closeButton)?.isHidden = state.closeHidden
         state.window.standardWindowButton(.miniaturizeButton)?.isHidden = state.miniHidden

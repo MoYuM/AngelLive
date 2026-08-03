@@ -958,7 +958,8 @@ final class CursorAutoHideNSView: NSView {
         }
     }
 
-    deinit {
+    // NSView 释放在主线程,isolated deinit 使其可同步访问 main-actor 隔离属性。
+    isolated deinit {
         // 终极兜底:就算 viewWillMove 没被触发,deinit 也一定会触发
         if let m = monitor { NSEvent.removeMonitor(m) }
         hideTimer?.invalidate()
@@ -1006,7 +1007,10 @@ final class CursorAutoHideNSView: NSView {
     private func scheduleHide() {
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: hideDelay, repeats: false) { [weak self] _ in
-            self?.hideCursorNow()
+            // 线程前提:scheduledTimer 挂在当前(主)RunLoop,回调必在主线程,判断错误会 trap。
+            MainActor.assumeIsolated {
+                self?.hideCursorNow()
+            }
         }
     }
 

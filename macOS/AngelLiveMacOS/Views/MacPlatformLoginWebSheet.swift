@@ -233,7 +233,10 @@ struct MacPlatformLoginWebSheet: View {
     private func startCookiePolling(entry: LoginPlatformEntry) {
         cookiePollingTimer?.invalidate()
         cookiePollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            pollCookieOnce(entry: entry)
+            // 线程前提:scheduledTimer 挂在当前(主)RunLoop,回调必在主线程,判断错误会 trap。
+            MainActor.assumeIsolated {
+                pollCookieOnce(entry: entry)
+            }
         }
     }
 

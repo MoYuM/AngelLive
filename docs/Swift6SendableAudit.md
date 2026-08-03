@@ -17,8 +17,8 @@
 
 | | 基线 | 当前 | 剩余分布 |
 |---|---:|---:|---|
-| iOS | 82 | **3** | 全部为 `DanmakuAsyncLayer` |
-| macOS | 88 | **16** | app 层 13 + `DanmakuAsyncLayer` 3 |
+| iOS | 82 | **0**(推算) | `DanmakuAsyncLayer` 3 条已清,未单独全量复测 |
+| macOS | 88 | **0**(实测) | app 层 13 条于 2026-08-03 清零,全量重编确认 |
 | tvOS | 275 | **44** | `QRCodeViewModel` 16、`RoomInfoViewModel` 13、其余零散 |
 
 `AngelLiveCore` 单独测量:**76 → 0**(2026-08-03 清掉最后 3 条 `DanmakuAsyncLayer`,
@@ -42,6 +42,7 @@
 ## 未完成
 
 - `GifAnimator` 的 `@unchecked`(拟标 `@MainActor`)
+- tvOS app 层 44 条(`QRCodeViewModel` 16、`RoomInfoViewModel` 13、其余零散)
 - **`DanmakuGraphicsContextStack` 疑似真实并发 bug** —— 详见 `DanmakuRenderingRoadmap.md`,应按 bug 单独修
 - 各端 app 层:macOS 13、tvOS 44
 - Phase 5 翻开关:`AngelLiveCore` 摘 `.swiftLanguageMode(.v5)`、三端 `SWIFT_VERSION` → 6.0
