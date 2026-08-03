@@ -1,10 +1,15 @@
 # Swift 6 / Sendable 适配现状
 
-审计日期: 2026-04-29 · 复核日期: 2026-07-31 · **迁移进行中,进度见下节**
+审计日期: 2026-04-29 · 复核日期: 2026-07-31 · 完成日期: **2026-08-03**
 范围: iOS / macOS / tvOS app + AngelLiveCore + AngelLiveDependencies + SharedAssets
 工作区 .swift 文件数: 268(排除 SPM `.build` 产物)
 
-整体进度估算: **70-75%**。基础设施已切到"渐进路径"档位,核心数据模型 Sendable 化基本完成,服务层 actor 化方向正确,剩余欠账集中在插件子系统和弹幕引擎。
+**代码侧迁移已完成**:三端并发警告归零,Phase 5 已翻开关——`AngelLiveCore` 摘
+`.swiftLanguageMode(.v5)`、三端全部构建配置 `SWIFT_VERSION = 6.0`,Swift 6 语言
+模式下 Core 0 诊断、77 单测全过、三端 BUILD SUCCEEDED。
+**尚未收尾的是真机验收**(见文末五项)——警告归零只代表编译器满意,
+`assumeIsolated` 的线程前提与 `isolated deinit` 的释放线程要真机跑过才算数。
+SharedAssets 仍为 tools 5.9 / v5 模式:纯资源包,无并发面,不动。
 
 ---
 
@@ -46,12 +51,18 @@
 
 ## 未完成
 
-- `GifAnimator` 的 `@unchecked`(拟标 `@MainActor`)
+**(代码侧已全部完成,仅剩文末真机验收)**
+
+- ~~`GifAnimator` 的 `@unchecked`~~ —— 2026-08-03 收口 `@MainActor`:解码改
+  nonisolated static + 快照传参;`SafeArray` 换 `OSAllocatedUnfairLock` 成为真
+  Sendable;摘掉类级 `@unchecked` 与预先存在的 `nonisolated(unsafe)` pool;
+  新增文件私有 `ImageSourceBox`(ImageIO 保证 CGImageSource 线程安全但 SDK 未标注)
 - ~~`DanmakuGraphicsContextStack` 疑似并发 bug~~ —— 2026-08-03 复核为死代码
   (shim 只在 macOS 编译,调用方全在 iOS/tvOS 分支),已整体删除,
   详见 `DanmakuRenderingRoadmap.md` §8;`@unchecked Sendable` 账目 27 → **26**
-- 各端 app 层:macOS 13、tvOS 44
-- Phase 5 翻开关:`AngelLiveCore` 摘 `.swiftLanguageMode(.v5)`、三端 `SWIFT_VERSION` → 6.0
+- ~~各端 app 层~~ —— macOS 13 条、tvOS 42 条均已于 2026-08-03 清零
+- ~~Phase 5 翻开关~~ —— 2026-08-03 落地:`AngelLiveCore` 摘 `.swiftLanguageMode(.v5)`,
+  三端全部配置(iOS 2、macOS 4、tvOS 12)`SWIFT_VERSION` → 6.0,Swift 6 模式一次通过
 
 ## 逃生舱账目
 
@@ -61,6 +72,12 @@
 2026-08-03 再次换血、总数不变:摘掉 `DanmakuAsyncLayer` 类上的死声明
 (被 SIL 分析忽略,见"已证伪"第 3 条),新增文件私有 `WeakLayerRef` 弱引用盒
 (仅主 actor 闭包内解包,注释标明禁止外移)。**仍净持平。**
+
+2026-08-03 收官账:`DanmakuGraphicsContextStack` 死代码删除 **-1**(27 → 26);
+`GifAnimator` 摘类级 `@unchecked` **-1**、新增 `ImageSourceBox` **+1**(26 持平),
+同时移除其预先存在的 `nonisolated(unsafe)` static pool(迁移新增代码始终未用
+`nonisolated(unsafe)`,存量也开始下降)。最终:**@unchecked Sendable 26 处**,
+全部为文档化的窄转移盒或锁保护容器。
 
 新增的逃生舱均为文件私有、类型文档写明了替代方案为何走不通、
 安全依据与禁止外移标注。

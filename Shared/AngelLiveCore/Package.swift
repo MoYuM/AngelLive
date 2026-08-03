@@ -36,9 +36,6 @@ let package = Package(
                 .product(name: "SharedAssets", package: "SharedAssets", condition: .when(platforms: [.iOS, .tvOS]))
             ],
             path: "Sources",
-            swiftSettings: [
-                .swiftLanguageMode(.v5)
-            ],
             linkerSettings: [
                 .linkedFramework("JavaScriptCore")
             ]
