@@ -2,7 +2,8 @@
 //  AngelLiveUITests.swift
 //  AngelLiveUITests
 //
-//  端测：验证「装好插件源 → 进入斗鱼分类 → 点进一个房间 → 播放页正常出现且 App 未崩溃」这条最短主链路。
+//  端测：验证「装好插件源 → 进入斗鱼分类 → 点进一个房间 → 播放页正常出现且 App 未崩溃」这条最短主链路，
+//  以及「进房间后再返回」这条链路。
 //  通过 UITEST_DEEPLINK_INSTALL_SOURCE 环境变量触发 ContentView 里的 DEBUG-only 深链安装钩子，
 //  跳过「启动 Safari 输入 URL 唤起 App」这条在自动化环境下不稳定的路径。
 //
@@ -17,6 +18,58 @@ final class AngelLiveUITests: XCTestCase {
 
     func testEnterDouyuRoomStartsPlayback() throws {
         let app = XCUIApplication()
+        let playerContent = enterFirstDouyuRoom(app: app)
+
+        // 如果确实进了播放分支，再多等一会——之前的崩溃(Now Playing 封面图)是在真正开始播放、
+        // 系统查询锁屏信息时才触发的，仅仅“出现播放器视图”这一刻还不够，要看它撑不撑得住。
+        if playerContent.exists {
+            attachScreenshot(named: "player_t0", to: app)
+            Thread.sleep(forTimeInterval: 4)
+            attachScreenshot(named: "player_t4", to: app)
+            XCTAssertEqual(app.state, .runningForeground, "播放开始后的几秒内 App 崩溃了")
+            Thread.sleep(forTimeInterval: 8)
+            attachScreenshot(named: "player_t12", to: app)
+            XCTAssertEqual(app.state, .runningForeground, "播放开始后的几秒内 App 崩溃了")
+            // 弹幕是异步到达的实时数据，给到最后再多等一会儿方便截图里能看到。
+            Thread.sleep(forTimeInterval: 10)
+            attachScreenshot(named: "player_t22", to: app)
+        }
+    }
+
+    func testGoBackFromRoomDoesNotCrash() throws {
+        let app = XCUIApplication()
+        let playerContent = enterFirstDouyuRoom(app: app)
+        try XCTSkipUnless(playerContent.exists, "没有进到正常播放分支(可能下播/报错),跳过返回测试")
+
+        // 控制层(含返回按钮) 5 秒无操作会自动隐藏(UnifiedPlayerControlOverlay 的 autoHideTask)，
+        // 之前两轮分别等了 6 秒/6+2 秒再找按钮，等到按钮已经淡出；这次只等 2 秒(在 5 秒窗口内)，
+        // 复现"进房间后很快点返回"这个更直接的场景，避免跟自动隐藏计时器打架。
+        Thread.sleep(forTimeInterval: 2)
+        attachScreenshot(named: "before_back", to: app)
+        XCTAssertEqual(app.state, .runningForeground, "进播放页 2 秒后 App 已经崩溃了")
+
+        let backButton = app.buttons["UnifiedPlayerControlOverlay.backButton"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 3), "返回按钮没出现。当前可见的元素:\n\(app.debugDescription)")
+
+        let douyuNavBar = app.navigationBars["斗鱼直播"]
+        let wentBack = tapUntil(backButton, until: douyuNavBar)
+
+        XCTAssertEqual(app.state, .runningForeground, "点返回后 App 崩溃了")
+        attachScreenshot(named: "after_back", to: app)
+
+        XCTAssertTrue(
+            wentBack,
+            "点返回按钮多次重试后仍未回到房间列表页。当前可见的元素:\n\(app.debugDescription)"
+        )
+
+        // 返回后再多等几秒，防止是异步清理(取消播放任务/断开弹幕连接等)延迟触发的崩溃。
+        Thread.sleep(forTimeInterval: 5)
+        XCTAssertEqual(app.state, .runningForeground, "返回房间列表后几秒内 App 崩溃了")
+    }
+
+    /// 走完整链路：装插件源 → 进斗鱼分类 → 点第一个房间 → 到达播放页三态之一。
+    /// 返回 playerContent 元素，调用方通过 `.exists` 判断是否真的进了正常播放分支。
+    private func enterFirstDouyuRoom(app: XCUIApplication) -> XCUIElement {
         app.launchEnvironment["UITEST_DEEPLINK_INSTALL_SOURCE"] =
             "https://ghfast.top/https://raw.githubusercontent.com/MoYuM/angellive-plugins/main/plugins.json"
         app.launch()
@@ -47,23 +100,9 @@ final class AngelLiveUITests: XCTestCase {
             enteredRoom,
             "点击房间多次重试后既没有进播放器、也没有报错/下播提示。当前可见的元素:\n\(app.debugDescription)"
         )
-
         XCTAssertEqual(app.state, .runningForeground, "进入播放页后 App 已经不在前台运行（崩溃/被系统终止）")
 
-        // 如果确实进了播放分支，再多等一会——之前的崩溃(Now Playing 封面图)是在真正开始播放、
-        // 系统查询锁屏信息时才触发的，仅仅“出现播放器视图”这一刻还不够，要看它撑不撑得住。
-        if playerContent.exists {
-            attachScreenshot(named: "player_t0", to: app)
-            Thread.sleep(forTimeInterval: 4)
-            attachScreenshot(named: "player_t4", to: app)
-            XCTAssertEqual(app.state, .runningForeground, "播放开始后的几秒内 App 崩溃了")
-            Thread.sleep(forTimeInterval: 8)
-            attachScreenshot(named: "player_t12", to: app)
-            XCTAssertEqual(app.state, .runningForeground, "播放开始后的几秒内 App 崩溃了")
-            // 弹幕是异步到达的实时数据，给到最后再多等一会儿方便截图里能看到。
-            Thread.sleep(forTimeInterval: 10)
-            attachScreenshot(named: "player_t22", to: app)
-        }
+        return playerContent
     }
 
     private func attachScreenshot(named name: String, to app: XCUIApplication) {

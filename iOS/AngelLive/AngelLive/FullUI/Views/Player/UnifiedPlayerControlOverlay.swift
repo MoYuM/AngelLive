@@ -325,6 +325,7 @@ struct UnifiedPlayerControlOverlay: View {
                 .padding(-10)
                 .buttonStyle(.plain)
                 .padding(.leading, windowControlsLeadingInset + iPhoneLandscapeCornerInset)
+                .accessibilityIdentifier("UnifiedPlayerControlOverlay.backButton")
                 Spacer()
             }
             Spacer()
