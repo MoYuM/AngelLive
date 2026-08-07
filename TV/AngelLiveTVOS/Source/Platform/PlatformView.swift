@@ -117,6 +117,7 @@ struct PlatformView: View {
                     .transition(.moveAndOpacity)
                     .animation(.easeInOut(duration: 0.25), value: true)
                     .frame(width: 380, height: 230)
+                    .accessibilityIdentifier("PlatformCard.\(platform.pluginId)")
                 }
 
             }

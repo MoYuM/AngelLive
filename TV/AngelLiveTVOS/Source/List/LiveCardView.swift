@@ -116,6 +116,7 @@ struct LiveCardView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.card)
+        .accessibilityIdentifier("RoomCell_\(index)")
         .focused(externalFocusState ?? $internalFocusState, equals: .mainContent(index))
         .onMoveCommand { direction in
             Logger.debug("LiveCardView onMoveCommand index=\(index) direction=\(direction)", category: .ui)

@@ -129,6 +129,21 @@ struct ContentView: View {
                         showPluginSyncPrompt = true
                     }
                 }
+
+                #if DEBUG
+                // UI 测试钩子：跳过手动在设置里添加订阅源的操作，直接走一遍真实安装逻辑。
+                // 仅 Debug 构建、且显式传入环境变量时才生效，不影响生产行为。
+                if let sourceInput = ProcessInfo.processInfo.environment["UITEST_DEEPLINK_INSTALL_SOURCE"] {
+                    let added = await appViewModel.pluginSourceManager.addSourceFromInput(sourceInput)
+                    if !added.isEmpty {
+                        await appViewModel.pluginSourceManager.fetchAllSourceIndexes()
+                        let count = await appViewModel.pluginSourceManager.installAll()
+                        if count > 0 {
+                            await appViewModel.pluginAvailability.refresh()
+                        }
+                    }
+                }
+                #endif
             }
         }
         .alert("检测到云端插件", isPresented: $showPluginSyncPrompt) {

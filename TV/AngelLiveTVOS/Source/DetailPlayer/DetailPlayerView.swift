@@ -43,6 +43,7 @@ struct DetailPlayerView: View {
             }
             .frame(width: 1920, height: 1080)
             .background(.black)
+            .accessibilityIdentifier("DetailPlayerView.streamerOfflineView")
         } else if roomInfoViewModel.hasError, let error = roomInfoViewModel.currentError {
             ErrorView(
                 title: error.isAuthRequired ? "播放失败-请登录\(LiveParseTools.getLivePlatformName(roomInfoViewModel.currentRoom.liveType))账号" : "播放失败",
@@ -60,6 +61,7 @@ struct DetailPlayerView: View {
                     playerCoordinator.playerLayer?.play()
                 }
             )
+            .accessibilityIdentifier("DetailPlayerView.errorView")
         } else if roomInfoViewModel.currentPlayURL == nil {
             ZStack {
                 KFImage(URL(string: roomInfoViewModel.currentRoom.roomCover))
@@ -153,6 +155,7 @@ struct DetailPlayerView: View {
                 }
             }
             .frame(width: 1920, height: 1080)
+            .accessibilityIdentifier("DetailPlayerView.playerContent")
         }
     }
 
@@ -241,6 +244,7 @@ private struct TVStreamPlaceholder: View {
             .tracking(4)
             .foregroundStyle(.white.opacity(0.45))
             .textCase(.uppercase)
+            .accessibilityIdentifier("TVStreamPlaceholder.connecting")
     }
 }
 
