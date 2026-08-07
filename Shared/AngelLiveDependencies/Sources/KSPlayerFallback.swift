@@ -43,14 +43,18 @@ public enum KSMediaType: Sendable {
     case subtitle
 }
 
-public struct DynamicInfo: Sendable {
-    public var displayFPS: Double = 0
-    public var droppedVideoFrameCount: Int = 0
-    public var droppedVideoPacketCount: Int = 0
-    public var audioVideoSyncDiff: Double = 0
-    public var networkSpeed: Double = 0
-    public var videoBitrate: Double = 0
-    public var audioBitrate: Double = 0
+// tvOS 播放速度浮层用 @ObservedObject 订阅 networkSpeed 变化，真 KSPlayer 的 DynamicInfo
+// 是个 ObservableObject class；这里跟着做成 class 而不是 struct，否则编译不过。
+// UI 状态本就该在主线程更新，标 @MainActor 而不是用 nonisolated(unsafe)/@unchecked Sendable。
+@MainActor
+public final class DynamicInfo: ObservableObject {
+    @Published public var displayFPS: Double = 0
+    @Published public var droppedVideoFrameCount: Int = 0
+    @Published public var droppedVideoPacketCount: Int = 0
+    @Published public var audioVideoSyncDiff: Double = 0
+    @Published public var networkSpeed: Double = 0
+    @Published public var videoBitrate: Double = 0
+    @Published public var audioBitrate: Double = 0
 
     public init() {}
 }
@@ -94,6 +98,7 @@ public enum KSPlaybackState: Sendable {
 
 public enum KSPlayerStateBase: Sendable {
     case initialized
+    case preparing
     case buffering
     case readyToPlay
     case paused
@@ -163,9 +168,12 @@ open class KSOptions {
     public var avOptions: [String: Any] = [:]
     public var formatContextOptions: [String: Any] = [:]
     public var decodeType: KSDecodeType = .software
+    /// 实际使用的视频解码方式（区别于上面的用户偏好 decodeType）；VLC 路径固定软解。
+    public var videoDecodeType: KSDecodeType = .software
     public var canStartPictureInPictureAutomaticallyFromInline: Bool = false
     public var registerRemoteControll: Bool = true
     public var playerTypes: [MediaPlayerProtocol.Type] = [KSAVPlayer.self, KSMEPlayer.self]
+    public var isLoopPlay: Bool = false
 
     public init() {}
 
@@ -200,7 +208,7 @@ private final class KSVLCBackend: NSObject {
     }
     var allowsExternalPlayback: Bool = false
     var seekable: Bool = true
-    var dynamicInfo = DynamicInfo()
+    var dynamicInfo = MainActor.assumeIsolated { DynamicInfo() }
     var onStateChanged: ((KSPlayerState) -> Void)?
     private var stateObserver: NSObjectProtocol?
 
@@ -227,8 +235,12 @@ private final class KSVLCBackend: NSObject {
     }
     #endif
 
+    // 不查 mediaPlayer.isPlaying:它要拿 VLC 内部播放器锁,而这个 getter 常在
+    // observePlayerState() 的 stateChangedNotification 回调里被(经由 delegate 转发)同步调用,
+    // 此时 VLC 可能仍持有该锁做状态转换 -> 主线程重入死锁。playbackState 已在同一个回调里
+    // 跟随 VLC 通知同步维护,语义等价且不用回调 VLC。
     var isPlaying: Bool {
-        mediaPlayer.isPlaying
+        playbackState == .playing
     }
 
     func tracks(mediaType: KSMediaType) -> [MediaPlayerTrack] {
@@ -277,6 +289,11 @@ private final class KSVLCBackend: NSObject {
 
     func stop() {
         mediaPlayer.stop()
+    }
+
+    func seek(time: TimeInterval, completion: @escaping (Bool) -> Void) {
+        mediaPlayer.time = VLCTime(int: Int32(time * 1000))
+        completion(true)
     }
 
     private func observePlayerState() {
@@ -365,6 +382,16 @@ public class KSPlayerLayerBase: NSObject {
 
     public func prepareToPlay() {}
 
+    public func seek(time: TimeInterval, autoPlay: Bool, completion: @escaping (Bool) -> Void) {
+        backend.seek(time: time) { [weak self] success in
+            guard let self else { return }
+            if autoPlay {
+                self.play()
+            }
+            completion(success)
+        }
+    }
+
     public func select(subtitleInfo info: MediaPlayerTrack?) {
         subtitleModel.selectedSubtitleInfo = info
     }
@@ -382,7 +409,7 @@ public final class KSComplexPlayerLayer: KSPlayerLayerBase {
     }
 }
 
-public final class KSCompatPlayer {
+public final class KSCompatPlayer: MediaPlayerProtocol {
     private let backend: KSVLCBackend
 
     fileprivate init(backend: KSVLCBackend) {
@@ -444,23 +471,33 @@ public struct KSVideoPlayer: View {
             }
     }
 
-    public final class Coordinator: ObservableObject {
+    public final class Coordinator: ObservableObject, KSPlayerLayerDelegate {
         @Published public var state: KSPlayerState = .initialized
         @Published public var isMaskShow: Bool = false
         public var shouldAutoReplay = false
         public var isScaleAspectFill = false
         public var playerLayer: KSPlayerLayer?
-        // 真实 KSPlayer 的业务观察者挂载点;VLC 内核下调用方在运行时 guard 跳过赋值后的触发,
-        // 这里只需要满足类型检查(同 reset()/prepareToPlay() 的理由)。
+        // 业务方(RoomInfoViewModel.setPlayerDelegate)挂载点;VLC 内核下由本类作为
+        // KSPlayerLayerDelegate 转发真实引擎事件驱动这两个闭包,不再是空占位。
         public var onStateChanged: ((KSPlayerLayer, KSPlayerState) -> Void)?
         public var onFinish: ((KSPlayerLayer, Error?) -> Void)?
+        private var openedURL: URL?
 
         public init(playerLayer: KSPlayerLayer? = nil) {
             self.playerLayer = playerLayer
+            playerLayer?.delegate = self
         }
 
         public func open(url: URL, options: KSOptions) {
+            // SwiftUI 每次重绘都会调用 updateUIView -> open(),同一个 URL 不重开,
+            // 否则 VLC media 被反复重建,播放永远停在缓冲阶段。
+            if let layer = playerLayer, openedURL == url {
+                layer.options = options
+                return
+            }
+            openedURL = url
             let layer = playerLayer ?? KSComplexPlayerLayer(options: options)
+            layer.delegate = self
             layer.options = options
             layer.set(url: url, options: options)
             playerLayer = layer
@@ -474,14 +511,29 @@ public struct KSVideoPlayer: View {
         public func resetPlayer() {
             playerLayer?.resetPlayer()
             state = .stopped
+            openedURL = nil
         }
 
         public func stop() {
             playerLayer?.stop()
             state = .stopped
+            openedURL = nil
         }
 
         public func enterBackground() {}
+
+        public func player(layer: KSPlayerLayer, state: KSPlayerState) {
+            self.state = state
+            onStateChanged?(layer, state)
+        }
+
+        public func player(layer _: KSPlayerLayer, currentTime _: TimeInterval, totalTime _: TimeInterval) {}
+
+        public func player(layer: KSPlayerLayer, finish error: Error?) {
+            onFinish?(layer, error)
+        }
+
+        public func player(layer _: KSPlayerLayer, bufferedCount _: Int, consumeTime _: TimeInterval) {}
     }
 }
 

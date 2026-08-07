@@ -127,9 +127,10 @@ public func mapKSPlayerEngineState(_ state: KSPlayerState) -> PlaybackEngineStat
     @unknown default: return .initialized
     }
     #else
-    // KSPlayerFallback.KSPlayerStateBase:initialized/buffering/readyToPlay/paused/playedToTheEnd/error/stopped
+    // KSPlayerFallback.KSPlayerStateBase:initialized/preparing/buffering/readyToPlay/paused/playedToTheEnd/error/stopped
     switch state {
     case .initialized: return .initialized
+    case .preparing: return .preparing
     case .readyToPlay: return .readyToPlay
     case .buffering: return .buffering
     case .paused: return .paused
