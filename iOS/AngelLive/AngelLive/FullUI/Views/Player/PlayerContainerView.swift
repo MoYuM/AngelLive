@@ -142,7 +142,9 @@ struct PlayerContentView: View {
             lastResignActiveAt = Date()
             if useKSPlayer {
                 wasPlayingBeforeBackground = playerCoordinator.playerLayer?.player.isPlaying ?? playerCoordinator.state.isPlaying
+                #if canImport(KSPlayer)
                 logForegroundLifecycleSnapshot(event: "willResignActive")
+                #endif
                 // 进入后台时自动开启画中画（每次读取最新设置值）
                 if PlayerSettingModel().enableAutoPiPOnBackground,
                    ownsGlobalCapability(.pictureInPicture) {
@@ -161,15 +163,21 @@ struct PlayerContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             guard useKSPlayer else { return }
+            #if canImport(KSPlayer)
             logForegroundLifecycleSnapshot(event: "didEnterBackground")
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             guard useKSPlayer else { return }
+            #if canImport(KSPlayer)
             logForegroundLifecycleSnapshot(event: "willEnterForeground")
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if useKSPlayer {
+                #if canImport(KSPlayer)
                 logForegroundLifecycleSnapshot(event: "didBecomeActive")
+                #endif
                 // 返回前台时自动关闭画中画
                 if let playerLayer = playerCoordinator.playerLayer as? KSComplexPlayerLayer,
                    playerLayer.isPictureInPictureActive {
@@ -286,8 +294,10 @@ struct PlayerContentView: View {
                         StreamLoadingOverlay(
                             dynamicInfo: playerCoordinator.playerLayer?.player.dynamicInfo
                         )
+                        .accessibilityIdentifier("PlayerContentView.loadingOverlay")
                         #else
                         StreamLoadingOverlay(dynamicInfo: nil)
+                            .accessibilityIdentifier("PlayerContentView.loadingOverlay")
                         #endif
                     }
 

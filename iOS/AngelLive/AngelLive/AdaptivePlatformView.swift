@@ -46,6 +46,7 @@ struct AdaptivePlatformView: View {
                                     .frame(width: metrics.itemWidth, height: metrics.itemHeight)
                             }
                             .buttonStyle(PlatformCardButtonStyle())
+                            .accessibilityIdentifier("PlatformCard.\(platform.pluginId)")
                         }
                     }
                     .padding(.horizontal, gridSpacing)

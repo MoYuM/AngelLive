@@ -187,6 +187,7 @@ struct DetailPlayerView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .zIndex(100)
+                    .accessibilityIdentifier("DetailPlayerView.streamerOfflineView")
                 }
                 // 错误视图 - 当播放出错时显示
                 else if viewModel.playError != nil || viewModel.playErrorMessage != nil {
@@ -214,10 +215,12 @@ struct DetailPlayerView: View {
                         } : nil
                     )
                     .zIndex(100)
+                    .accessibilityIdentifier("DetailPlayerView.errorView")
                 } else {
                     // 播放器 - 始终在同一位置，只改变 frame，不会重建
                     PlayerContentView(playerCoordinator: playerCoordinator, playerModel: playerModel)
                         .id("stable_player")
+                        .accessibilityIdentifier("DetailPlayerView.playerContent")
                         .environment(viewModel)
                         .environment(\.isVerticalLiveMode, isVerticalLiveMode)
                         .environment(\.safeAreaInsetsCustom, safeInsets)

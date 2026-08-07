@@ -437,6 +437,9 @@ extension RoomListViewController: UICollectionViewDataSource {
             cell.configure(with: room, liveCheckMode: .none)
         }
         cell.attachHostingController(to: self)
+        // SwiftUI 卡片内部禁用了交互（真实点击靠 didSelectItemAt），
+        // XCUITest 只能定位到这层 UIKit cell，标识符打在这里而不是 SwiftUI 子视图上。
+        cell.accessibilityIdentifier = "RoomCell_\(indexPath.item)"
 
         return cell
     }

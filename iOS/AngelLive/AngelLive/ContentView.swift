@@ -161,6 +161,15 @@ struct ContentView: View {
                     showPluginSyncPrompt = true
                 }
             }
+
+            #if DEBUG
+            // UI 测试钩子：跳过“启动 Safari 输入深链”这条不稳定的跨 App 路径，
+            // 直接复用 handleDeepLink 走一遍真实安装逻辑。仅 Debug 构建、且显式传入
+            // 环境变量时才生效，不影响生产行为。
+            if let sourceInput = ProcessInfo.processInfo.environment["UITEST_DEEPLINK_INSTALL_SOURCE"] {
+                await handleDeepLink(.installSource(input: sourceInput))
+            }
+            #endif
         }
         .alert("检测到云端插件", isPresented: $showPluginSyncPrompt) {
             Button("一键安装") {
