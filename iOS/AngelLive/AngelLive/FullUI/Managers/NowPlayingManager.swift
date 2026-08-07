@@ -92,9 +92,15 @@ enum NowPlayingManager {
                     completion(nil)
                     return
                 }
-                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-                completion(artwork)
+                completion(makeArtwork(image: image))
             }
         }.resume()
+    }
+
+    /// 系统会在任意后台队列上按需调用 MPMediaItemArtwork 的 requestHandler（锁屏/CarPlay 生成缩略图时），
+    /// 必须显式 nonisolated，否则在 SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor 下闭包字面量会被隐式
+    /// 推断成 MainActor 隔离，被系统在非主线程调用时触发运行时断言崩溃。
+    nonisolated private static func makeArtwork(image: UIImage) -> MPMediaItemArtwork {
+        MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 }
