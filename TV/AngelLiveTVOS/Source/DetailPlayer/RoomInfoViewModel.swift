@@ -626,6 +626,12 @@ final class RoomInfoViewModel {
 
         danmuServerIsConnected = false
         danmuServerIsLoading = false
+
+        // 退出播放页(DetailPlayerView.cleanupPlayer)只调这个方法,原先没清 liveFlagTimer——
+        // 除非检测到下播,这个 timer 会一直挂在 RunLoop 上,连带它闭包捕获的 self 一起漏掉,
+        // 换台次数一多就攒成一条条不会释放的 RoomInfoViewModel 引用链。
+        liveFlagTimer?.invalidate()
+        liveFlagTimer = nil
     }
 
     @MainActor
