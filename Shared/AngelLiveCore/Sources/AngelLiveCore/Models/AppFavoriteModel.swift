@@ -113,11 +113,19 @@ public final class AppFavoriteModel {
     /// 内部的 os_unfair_lock —— 放主线程会把启动关键路径卡死并被系统判为无响应(App Hang)。
     /// 故:首次触碰 `.shared`(触发 static let 的 dispatch_once → CKContainer 创建)放到
     /// 后台线程,再 await 其完成。既不阻塞主线程,又保证返回时 engine 已就绪。
+    ///
+    /// - Returns: 引擎是否已就绪可用。entitlements 里没有目标容器时(见 CloudKitAvailability)
+    ///   直接返回 false、绝不触碰 `.shared`——那会直接触发 CKContainer(identifier:) 崩溃。
+    ///   调用方必须先检查返回值,再决定要不要继续调用 FavoriteSyncEngine.shared 的其它方法。
     @MainActor
-    private func startCloudSyncIfNeeded() async {
+    @discardableResult
+    private func startCloudSyncIfNeeded() async -> Bool {
+        guard CloudKitAvailability.isContainerAvailable(FavoriteSyncEngine.containerIdentifier) else {
+            return false
+        }
         if let bootstrap = cloudSyncBootstrap {
             await bootstrap.value
-            return
+            return true
         }
         let bootstrap = Task { @MainActor [weak self] in
             // .shared 的首次访问必须在后台线程,否则主线程会同步卡在 CKContainer 内部锁上。
@@ -130,6 +138,7 @@ public final class AppFavoriteModel {
         }
         cloudSyncBootstrap = bootstrap
         await bootstrap.value
+        return true
     }
 
     /// 引擎拉到远端变更后回调上层刷新(独立 helper,避免在预热 Task 里嵌套捕获 self)。
@@ -161,7 +170,7 @@ public final class AppFavoriteModel {
         await FavoriteLocalStore.shared.save(result.rooms)
         // §10.7:关闭 iCloud 同步 = 纯本地,绝不触发任何身份回写。
         guard favoriteICloudSyncEnabled, !result.identityChanges.isEmpty else { return }
-        await startCloudSyncIfNeeded()
+        guard await startCloudSyncIfNeeded() else { return }
         for change in result.identityChanges {
             FavoriteSyncEngine.shared.enqueueIdentityMetadataRefresh(oldKey: change.oldKey, room: change.newRoom)
         }
@@ -225,16 +234,18 @@ public final class AppFavoriteModel {
         }
 
         // 启动引擎(幂等)+ 拉一次云端变更进本地真相(CKSyncEngine 负责跨设备成员合并)。
-        await startCloudSyncIfNeeded()
+        let cloudSyncReady = await startCloudSyncIfNeeded()
         let state = await actor.getState()
         self.cloudKitReady = state.0
         self.cloudKitStateString = state.1
-        // 拉取不依赖 cloudKitReady 预检:该账号预检在分流/代理环境下会瞬时假阴性,
-        // 导致 fetchChanges 被永久跳过 —— 对端的增/删永远拉不到。引擎自带退避与错误处理,
-        // 账号真不可用时 fetch 会安全失败、不阻塞本地。cloudKitReady 仅用于下方 UI 状态展示。
-        await FavoriteSyncEngine.shared.fetchChanges()
-        // 不依赖 token 的全量对账兜底:补回增量 token 漂掉的对端新增。
-        await FavoriteSyncEngine.shared.fullReconcile()
+        if cloudSyncReady {
+            // 拉取不依赖 cloudKitReady 预检:该账号预检在分流/代理环境下会瞬时假阴性,
+            // 导致 fetchChanges 被永久跳过 —— 对端的增/删永远拉不到。引擎自带退避与错误处理,
+            // 账号真不可用时 fetch 会安全失败、不阻塞本地。cloudKitReady 仅用于下方 UI 状态展示。
+            await FavoriteSyncEngine.shared.fetchChanges()
+            // 不依赖 token 的全量对账兜底:补回增量 token 漂掉的对端新增。
+            await FavoriteSyncEngine.shared.fullReconcile()
+        }
 
         // 用本地真相(引擎可能已更新)刷新直播状态并应用。
         let current = await FavoriteLocalStore.shared.load()
@@ -284,16 +295,18 @@ public final class AppFavoriteModel {
             return
         }
 
-        await startCloudSyncIfNeeded()
+        let cloudSyncReady = await startCloudSyncIfNeeded()
         let state = await actor.getState()
         self.cloudKitReady = state.0
         self.cloudKitStateString = state.1
-        // 拉取不依赖 cloudKitReady 预检:该账号预检在分流/代理环境下会瞬时假阴性,
-        // 导致 fetchChanges 被永久跳过 —— 对端的增/删永远拉不到。引擎自带退避与错误处理,
-        // 账号真不可用时 fetch 会安全失败、不阻塞本地。cloudKitReady 仅用于下方 UI 状态展示。
-        await FavoriteSyncEngine.shared.fetchChanges()
-        // 不依赖 token 的全量对账兜底:补回增量 token 漂掉的对端新增。
-        await FavoriteSyncEngine.shared.fullReconcile()
+        if cloudSyncReady {
+            // 拉取不依赖 cloudKitReady 预检:该账号预检在分流/代理环境下会瞬时假阴性,
+            // 导致 fetchChanges 被永久跳过 —— 对端的增/删永远拉不到。引擎自带退避与错误处理,
+            // 账号真不可用时 fetch 会安全失败、不阻塞本地。cloudKitReady 仅用于下方 UI 状态展示。
+            await FavoriteSyncEngine.shared.fetchChanges()
+            // 不依赖 token 的全量对账兜底:补回增量 token 漂掉的对端新增。
+            await FavoriteSyncEngine.shared.fullReconcile()
+        }
 
         let current = await FavoriteLocalStore.shared.load()
         await refreshStatesAndApply(members: current)
@@ -384,8 +397,7 @@ public final class AppFavoriteModel {
         persistLocal()
 
         // 云端同步(非阻塞):交给 CKSyncEngine 入队,引擎自带退避/续传。
-        if favoriteICloudSyncEnabled {
-            await startCloudSyncIfNeeded()
+        if favoriteICloudSyncEnabled, await startCloudSyncIfNeeded() {
             FavoriteSyncEngine.shared.enqueueSave(room)
             lastSyncError = nil
         }
@@ -418,8 +430,7 @@ public final class AppFavoriteModel {
         persistLocal()
 
         // 云端删除(非阻塞):交给 CKSyncEngine 入队。
-        if favoriteICloudSyncEnabled {
-            await startCloudSyncIfNeeded()
+        if favoriteICloudSyncEnabled, await startCloudSyncIfNeeded() {
             FavoriteSyncEngine.shared.enqueueDelete(room)
             lastSyncError = nil
         }

@@ -14,7 +14,7 @@ import Observation
 // MARK: - CloudKit 配置
 
 private enum CloudPluginSourceFields {
-    static let containerIdentifier = "iCloud.icloud.dev.igod.simplelive"
+    static let containerIdentifier = "iCloud.com.moyum.angellive"
     static let recordType = "plugin_sources"
     static let urlsField = "urls"
     static let updatedAtField = "updated_at"
@@ -51,6 +51,9 @@ public final class PluginSourceSyncService {
     /// 返回结构化结果(错误带码 + 建议),便于调用方/后续 UI 展示;失败不再被静默吞掉。
     @discardableResult
     public static func syncToCloudStatic(sourceURLs: [String]) async -> OperationOutcome {
+        guard CloudKitAvailability.isContainerAvailable(CloudPluginSourceFields.containerIdentifier) else {
+            return .failure(.containerUnavailable)
+        }
         let container = CKContainer(identifier: CloudPluginSourceFields.containerIdentifier)
         let database = container.privateCloudDatabase
         let recordID = CKRecord.ID(recordName: CloudPluginSourceFields.fixedRecordName)
@@ -97,6 +100,10 @@ public final class PluginSourceSyncService {
     @MainActor
     public func checkCloudForSources() async {
         guard !userDismissedPrompt else {
+            hasSyncedSources = false
+            return
+        }
+        guard CloudKitAvailability.isContainerAvailable(CloudPluginSourceFields.containerIdentifier) else {
             hasSyncedSources = false
             return
         }

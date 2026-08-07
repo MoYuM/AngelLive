@@ -16,7 +16,7 @@ import UIKit
 // MARK: - CloudKit 配置
 
 private enum CloudCookieFields {
-    static let containerIdentifier = "iCloud.icloud.dev.igod.simplelive"
+    static let containerIdentifier = "iCloud.com.moyum.angellive"
     static let recordType = "cookie_sessions"
     static let cookieDataField = "cookie_data"
     static let platformIdField = "platform_id"
@@ -176,6 +176,10 @@ public final class PlatformCredentialSyncService: ObservableObject {
         isSyncing = true
         defer { isSyncing = false }
 
+        guard CloudKitAvailability.isContainerAvailable(CloudCookieFields.containerIdentifier) else {
+            return .failure(.containerUnavailable)
+        }
+
         let sessions = await collectAllPlatformSessions()
         let sessionsByPluginId: [String: SyncedCookieData] = sessions.reduce(into: [:]) { result, session in
             guard let pluginId = session.platformId else { return }
@@ -241,6 +245,9 @@ public final class PlatformCredentialSyncService: ObservableObject {
     /// 网络/权限等错误才计入。
     @discardableResult
     public func syncAllFromICloud() async -> OperationOutcome {
+        guard CloudKitAvailability.isContainerAvailable(CloudCookieFields.containerIdentifier) else {
+            return .failure(.containerUnavailable)
+        }
         isSyncing = true
         defer { isSyncing = false }
 
@@ -320,6 +327,9 @@ public final class PlatformCredentialSyncService: ObservableObject {
     }
 
     public func fetchCloudSyncPreview() async -> ICloudSyncPreview {
+        guard CloudKitAvailability.isContainerAvailable(CloudCookieFields.containerIdentifier) else {
+            return ICloudSyncPreview(latestTime: nil, platformNames: [])
+        }
         let container = CKContainer(identifier: CloudCookieFields.containerIdentifier)
         let database = container.privateCloudDatabase
 
@@ -349,6 +359,9 @@ public final class PlatformCredentialSyncService: ObservableObject {
     /// 清理 CloudKit 中保存的所有平台登录信息，不影响本地登录态。
     @discardableResult
     public func clearAllICloudSessions() async -> Int {
+        guard CloudKitAvailability.isContainerAvailable(CloudCookieFields.containerIdentifier) else {
+            return 0
+        }
         isSyncing = true
         defer { isSyncing = false }
 
@@ -615,7 +628,7 @@ public final class PlatformCredentialSyncService: ObservableObject {
         await PlatformSessionManager.shared.clearSession(pluginId: pluginId)
         loggedInByPluginId[pluginId] = false
 
-        if clearICloud {
+        if clearICloud, CloudKitAvailability.isContainerAvailable(CloudCookieFields.containerIdentifier) {
             let container = CKContainer(identifier: CloudCookieFields.containerIdentifier)
             let database = container.privateCloudDatabase
             let recordName = CloudCookieFields.sessionRecordName(for: pluginId)

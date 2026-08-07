@@ -86,6 +86,9 @@ public extension SyncError {
 
     /// 任意 Error → SyncError。识别 CKError / CancellationError,其余兜底。
     static func from(_ error: Error) -> SyncError {
+        if let syncError = error as? SyncError {
+            return syncError
+        }
         if let ckError = error as? CKError {
             return from(ckError)
         }
@@ -172,6 +175,14 @@ public extension SyncError {
                              title: "同步失败", advice: nil, rawDescription: raw)
         }
     }
+
+    /// entitlements 里没有目标容器(如换了 Bundle ID/Team 但未重新申请 iCloud 容器、
+    /// 或未签名调试构建压根没嵌入 entitlements)。见 CloudKitAvailability。
+    static let containerUnavailable = SyncError(
+        code: -5, kind: .configuration,
+        title: "iCloud 同步不可用", advice: "此构建未配置 iCloud 容器。",
+        rawDescription: "CKContainer.default().containerIdentifier mismatch or missing entitlements"
+    )
 
     /// CKAccountStatus → SyncError。`.available` 返回 nil(无错误)。
     static func from(accountStatus: CKAccountStatus) -> SyncError? {

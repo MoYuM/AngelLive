@@ -17,7 +17,7 @@ private enum CloudStreamBookmarkFields {
     static let url = "url"
     static let addedAt = "added_at"
     static let lastPlayedAt = "last_played_at"
-    static let containerIdentifier = "iCloud.icloud.dev.igod.simplelive"
+    static let containerIdentifier = "iCloud.com.moyum.angellive"
 }
 
 /// 网页链接书签服务(视图模型)。@Observable 状态(bookmarks/isLoading/syncError)必须在
@@ -128,7 +128,12 @@ public final class StreamBookmarkService {
     /// 每次现构造 CKContainer,不依赖任何实例状态,故与下面四个 I/O 方法一并声明为 static。
     /// 这样 @MainActor 方法 await 它们时无需把非 Sendable 的 self 跨隔离域传递。
     private static var database: CKDatabase {
-        CKContainer(identifier: CloudStreamBookmarkFields.containerIdentifier).privateCloudDatabase
+        get throws {
+            guard CloudKitAvailability.isContainerAvailable(CloudStreamBookmarkFields.containerIdentifier) else {
+                throw SyncError.containerUnavailable
+            }
+            return CKContainer(identifier: CloudStreamBookmarkFields.containerIdentifier).privateCloudDatabase
+        }
     }
 
     private static func saveToCloud(_ bookmark: StreamBookmark) async throws {

@@ -24,7 +24,10 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
 
     // MARK: - 配置
 
-    private let containerID = "iCloud.icloud.dev.igod.simplelive"
+    /// static 暴露:调用方需要在碰 `.shared`(触发单例构造 → CKContainer(identifier:))前
+    /// 先用 CloudKitAvailability 检查这个容器是否真的在 entitlements 里,否则直接崩溃。
+    static let containerIdentifier = "iCloud.com.moyum.angellive"
+    private let containerID = FavoriteSyncEngine.containerIdentifier
     private let zoneName = "FavoritesZone"
     private static let recordType = "favorite_streamers"
     private let zoneID: CKRecordZone.ID

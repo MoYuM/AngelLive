@@ -16,12 +16,15 @@ private enum CloudFavoriteFields {
     static let roomCover = "room_cover"
     static let userHeadImage = "user_head_img"
     static let liveType = "live_type"
-    static let containerIdentifier = "iCloud.icloud.dev.igod.simplelive"
+    static let containerIdentifier = "iCloud.com.moyum.angellive"
 }
 
 public final class FavoriteService: NSObject {
     
     public static func saveRecord(liveModel: LiveModel) async throws {
+        guard CloudKitAvailability.isContainerAvailable(CloudFavoriteFields.containerIdentifier) else {
+            throw SyncError.containerUnavailable
+        }
         let rec = CKRecord(recordType: "favorite_streamers")
         rec.setValue(liveModel.roomId, forKey: CloudFavoriteFields.roomId)
         rec.setValue(liveModel.userId, forKey: CloudFavoriteFields.userId)
@@ -34,6 +37,9 @@ public final class FavoriteService: NSObject {
     }
     
     public static func searchRecord(roomId: String) async throws -> [LiveModel] {
+        guard CloudKitAvailability.isContainerAvailable(CloudFavoriteFields.containerIdentifier) else {
+            throw SyncError.containerUnavailable
+        }
         let container = CKContainer(identifier: CloudFavoriteFields.containerIdentifier)
         let database = container.privateCloudDatabase
         let predicate = NSPredicate(format: " \(CloudFavoriteFields.roomId) = '\(roomId)' ")
@@ -59,6 +65,9 @@ public final class FavoriteService: NSObject {
     }
     
     public static func searchRecord() async throws -> [LiveModel] {
+        guard CloudKitAvailability.isContainerAvailable(CloudFavoriteFields.containerIdentifier) else {
+            throw SyncError.containerUnavailable
+        }
         let container = CKContainer(identifier: CloudFavoriteFields.containerIdentifier)
         let database = container.privateCloudDatabase
         let query = CKQuery(recordType: "favorite_streamers", predicate: NSPredicate(value: true))
@@ -92,6 +101,9 @@ public final class FavoriteService: NSObject {
     }
     
     public static func deleteRecord(liveModel: LiveModel) async throws {
+        guard CloudKitAvailability.isContainerAvailable(CloudFavoriteFields.containerIdentifier) else {
+            throw SyncError.containerUnavailable
+        }
         let container = CKContainer(identifier: CloudFavoriteFields.containerIdentifier)
         let database = container.privateCloudDatabase
         let trimmedUserId = liveModel.userId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,20 +135,14 @@ public final class FavoriteService: NSObject {
             return "CloudKit 配置错误：容器标识符为空"
         }
         
-        // 2. 检查 CloudKit 可用性
-        guard CKContainer.default().containerIdentifier != nil else {
+        // 2. 检查 CloudKit 可用性(不经过 CloudKit 框架本身探测,见 CloudKitAvailability 头注释)
+        guard CloudKitAvailability.isContainerAvailable(CloudFavoriteFields.containerIdentifier) else {
             return "CloudKit 服务不可用"
         }
-        
+
         do {
-            // 3. 使用更安全的容器初始化方式
-            let container: CKContainer
-            if CloudFavoriteFields.containerIdentifier == CKContainer.default().containerIdentifier {
-                container = CKContainer.default()
-            } else {
-                container = CKContainer(identifier: CloudFavoriteFields.containerIdentifier)
-            }
-            
+            let container = CKContainer(identifier: CloudFavoriteFields.containerIdentifier)
+
             // 4. 添加超时保护
             let status = try await withTimeout(seconds: 10) {
                 try await container.accountStatus()
