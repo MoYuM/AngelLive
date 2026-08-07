@@ -139,8 +139,13 @@ public final class LiveParsePluginManager: @unchecked Sendable {
 
             console.clearActiveCall(pluginId: pluginId)
             let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-            let responseStr = (try? String(data: JSONSerialization.data(withJSONObject: result), encoding: .utf8))
-                .map { String($0.prefix(2000)) }
+            // result 是插件函数的原始返回值,可能是字符串/数字/布尔这类非容器顶层类型——
+            // JSONSerialization 对这种情况是抛未捕获的 NSException,不是 try? 能接住的 Swift 错误,
+            // 这里只是给开发者控制台拼预览文本,先校验,不合法就跳过预览而不是崩整个 App。
+            let responseStr: String? = JSONSerialization.isValidJSONObject(result)
+                ? (try? String(data: JSONSerialization.data(withJSONObject: result), encoding: .utf8))
+                    .map { String($0.prefix(2000)) }
+                : String(String(describing: result).prefix(2000))
             await console.updateStatus(id: entryId, status: .success, duration: elapsed, responseBody: responseStr)
             return result
         } catch {
@@ -159,6 +164,14 @@ public final class LiveParsePluginManager: @unchecked Sendable {
     ) async throws -> T {
         do {
             let value = try await call(pluginId: pluginId, function: function, payload: payload)
+            // JSONSerialization.data(withJSONObject:) 对"顶层不是数组/字典"这类错误是直接抛
+            // 未捕获的 NSException(不走 Swift 的 error/throws 通道),下面的 do/catch 包不住,
+            // 插件随便返回个字符串/数字/布尔值就能让整个 App 崩溃。先显式校验再序列化。
+            guard JSONSerialization.isValidJSONObject(value) else {
+                throw LiveParsePluginError.invalidReturnValue(
+                    "\(pluginId).\(function) returned non-JSON-object top-level value: \(String(describing: value))"
+                )
+            }
             let data = try JSONSerialization.data(withJSONObject: value)
             if let jsonStr = String(data: data, encoding: .utf8) {
                 Logger.debug("[PluginManager] callDecodable: pluginId=\(pluginId) function=\(function) rawJSON=\(jsonStr.prefix(1000))", category: .plugin)
