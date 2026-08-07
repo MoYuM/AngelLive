@@ -4,7 +4,10 @@
 //
 //  将 KSPlayer 的 KSLog 输出同时打印到 Xcode 控制台(OSLog)和 App 内开发者控制台
 //  (PluginConsoleService),方便在 TestFlight 等无线设备上排查播放问题。
+//  仅真实 KSPlayer 内核可用:KSPlayerFallback shim(VLC 内核)未实现 LogHandler/logger。
 //
+
+#if canImport(KSPlayer)
 
 import Foundation
 import AngelLiveCore
@@ -71,3 +74,5 @@ final class KSPlayerConsoleBridge: LogHandler, @unchecked Sendable {
         }
     }
 }
+
+#endif

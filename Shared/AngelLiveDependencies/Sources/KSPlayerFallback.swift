@@ -164,6 +164,8 @@ open class KSOptions {
     public var formatContextOptions: [String: Any] = [:]
     public var decodeType: KSDecodeType = .software
     public var canStartPictureInPictureAutomaticallyFromInline: Bool = false
+    public var registerRemoteControll: Bool = true
+    public var playerTypes: [MediaPlayerProtocol.Type] = [KSAVPlayer.self, KSMEPlayer.self]
 
     public init() {}
 
@@ -355,6 +357,14 @@ public class KSPlayerLayerBase: NSObject {
         stop()
     }
 
+    // 与 resetPlayer() 同义:真实 KSPlayer 的调用方用的是 reset()/prepareToPlay() 这一对方法名,
+    // VLC 内核下这条运行路径本就不会被触发(useKSPlayer 为 false),这里只需满足类型检查。
+    public func reset() {
+        stop()
+    }
+
+    public func prepareToPlay() {}
+
     public func select(subtitleInfo info: MediaPlayerTrack?) {
         subtitleModel.selectedSubtitleInfo = info
     }
@@ -440,6 +450,10 @@ public struct KSVideoPlayer: View {
         public var shouldAutoReplay = false
         public var isScaleAspectFill = false
         public var playerLayer: KSPlayerLayer?
+        // 真实 KSPlayer 的业务观察者挂载点;VLC 内核下调用方在运行时 guard 跳过赋值后的触发,
+        // 这里只需要满足类型检查(同 reset()/prepareToPlay() 的理由)。
+        public var onStateChanged: ((KSPlayerLayer, KSPlayerState) -> Void)?
+        public var onFinish: ((KSPlayerLayer, Error?) -> Void)?
 
         public init(playerLayer: KSPlayerLayer? = nil) {
             self.playerLayer = playerLayer

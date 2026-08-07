@@ -134,14 +134,36 @@ struct VLCVideoPlayerView: UIViewRepresentable {
         return "\(host)\(url.path)"
     }
 
+    /// nonisolated:只用来在 Coordinator 释放时清理 VLC 资源。
+    /// deinit 恒为 nonisolated,碰不到 @MainActor 隔离的存储属性;
+    /// 把需要在 deinit 里清理的资源单独放进一个本来就没有隔离的类型,deinit 读自己的属性天经地义。
+    /// 参见 dev-kit knowledge/ios/swift6-concurrency-escape-hatches.md 「5. deinit 里清理资源」。
+    // 项目开了 SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor,不显式标 nonisolated 的话
+    // 这个类型也会被默认隔离,deinit 依然碰不到自己的存储属性。
+    private nonisolated final class VLCCoordinatorResources {
+        let mediaPlayer = VLCMediaPlayer()
+        var notificationTokens: [NSObjectProtocol] = []
+
+        deinit {
+            mediaPlayer.stop()
+            mediaPlayer.drawable = nil
+            mediaPlayer.media = nil
+            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+        }
+    }
+
     final class Coordinator: NSObject {
-        private let mediaPlayer = VLCMediaPlayer()
+        private let resources = VLCCoordinatorResources()
+        private var mediaPlayer: VLCMediaPlayer { resources.mediaPlayer }
+        private var notificationTokens: [NSObjectProtocol] {
+            get { resources.notificationTokens }
+            set { resources.notificationTokens = newValue }
+        }
         private weak var controller: VLCPlaybackController?
         fileprivate var onStateChanged: ((VLCPlaybackBridgeState) -> Void)?
 
         fileprivate private(set) var containerView: UIView
         private var currentRequestFingerprint: String?
-        private var notificationTokens: [NSObjectProtocol] = []
         private var shouldResumeAfterForeground = false
         private var lastNotifiedState: VLCPlaybackBridgeState?
         private var lastObservedPlayerState: VLCMediaPlayerState?
@@ -161,10 +183,7 @@ struct VLCVideoPlayerView: UIViewRepresentable {
 
         deinit {
             Logger.debug("[VLCBridge][\(traceID)] coordinator deinit", category: .player)
-            mediaPlayer.stop()
-            mediaPlayer.drawable = nil
-            mediaPlayer.media = nil
-            notificationTokens.forEach(NotificationCenter.default.removeObserver)
+            // 资源清理由 resources 自己的 deinit 负责(它是 nonisolated 类型,见上方定义)。
         }
 
         fileprivate func attach(to view: UIView) {
