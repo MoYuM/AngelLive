@@ -24,6 +24,28 @@ struct DetailPlayerView: View {
     public var didExitView: (Bool, String) -> Void = {_, _ in}
     
     var body: some View {
+        // 播放器清理与首播粘性标志必须挂在这一层：它们一旦挂到 currentPlayURL 分支内的
+        // 子视图上,同 URL 强制重载(setPlayURL 把 currentPlayURL 瞬时置 nil 再设回)就会
+        // 被当成"离开播放页",误触发 cleanupPlayer() 把 Coordinator 的 playerLayer 和状态
+        // 回调一起清掉 —— 画面还在放,加载层却永远撤不掉。与 macOS RoomPlayerView 对齐。
+        content
+            .onReceive(NotificationCenter.default.publisher(for: SimpleLiveNotificationNames.playerEndPlay)) { _ in
+                endPlay()
+            }
+            .onDisappear {
+                cleanupPlayer()
+            }
+            // Coordinator remains the sole layer delegate; the VM receives its forwarded callbacks.
+            // Keep first playback sticky so a later pause or rebuffer does not look like startup.
+            .onChange(of: roomInfoViewModel.isPlaying) { _, isPlaying in
+                if isPlaying {
+                    hasStartedStreamPlayback = true
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if roomInfoViewModel.displayState == .streamerOffline {
             // 主播已下播页面
             VStack(spacing: 30) {
@@ -110,7 +132,9 @@ struct DetailPlayerView: View {
                 // 加载/缓冲指示器 - URL 已就绪但尚未开始播放，或播放中缓冲时显示
                 if shouldShowStreamLoading {
                     TVStreamLoadingOverlay(
-                        dynamicInfo: playerCoordinator.playerLayer?.player.dynamicInfo
+                        // player.dynamicInfo 本身是可选(AVPlayer 内核为 nil),
+                        // 再套一层 playerLayer? 会成双重可选,这里拍平。
+                        dynamicInfo: playerCoordinator.playerLayer?.player.dynamicInfo ?? nil
                     )
                     .zIndex(4)
                 }
@@ -138,21 +162,8 @@ struct DetailPlayerView: View {
                     .zIndex(2)
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: SimpleLiveNotificationNames.playerEndPlay)) { _ in
-                endPlay()
-            }
-            .onDisappear {
-                cleanupPlayer()
-            }
             .onPlayPauseCommand {
                 roomInfoViewModel.togglePlayPause()
-            }
-            // Coordinator remains the sole layer delegate; the VM receives its forwarded callbacks.
-            // Keep first playback sticky so a later pause or rebuffer does not look like startup.
-            .onChange(of: roomInfoViewModel.isPlaying) { _, isPlaying in
-                if isPlaying {
-                    hasStartedStreamPlayback = true
-                }
             }
             .frame(width: 1920, height: 1080)
             .accessibilityIdentifier("DetailPlayerView.playerContent")

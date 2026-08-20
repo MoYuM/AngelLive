@@ -23,7 +23,7 @@ private func resolveKSPlayerDependency() -> (package: Package.Dependency, target
     }
 
     return (
-        .package(url: "https://github.com/TracyPlayer/KSPlayer", branch: "lgpl"),
+        .package(url: "https://github.com/kingslay/KSPlayer", branch: "main"),
         "KSPlayer"
     )
 }

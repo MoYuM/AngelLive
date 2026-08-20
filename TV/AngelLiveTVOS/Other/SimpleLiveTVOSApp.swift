@@ -6,7 +6,8 @@
 //
 
 import SwiftUI
-import AngelLiveDependencies
+// KSOptions.logLevel 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 import AngelLiveCore
 import TipKit
 

@@ -5,7 +5,8 @@
 
 import SwiftUI
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的 isAutoPlay 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 
 struct TVDirectURLPlayerView: View {
     let url: URL
@@ -14,7 +15,7 @@ struct TVDirectURLPlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var playerCoordinator: KSVideoPlayer.Coordinator
-    private let playerOptions: KSOptions
+    private let playerOptions: PlayerOptions
     @State private var showControls = true
     @State private var playbackMachine = PlaybackStatusMachine()
     @State private var playbackStatus: PlaybackStatus = .loading
@@ -25,7 +26,7 @@ struct TVDirectURLPlayerView: View {
         self.url = url
         self.title = title
 
-        let options = KSOptions()
+        let options = PlayerOptions()
         options.userAgent = "libmpv"
         KSOptions.isAutoPlay = true
         options.registerRemoteControll = false

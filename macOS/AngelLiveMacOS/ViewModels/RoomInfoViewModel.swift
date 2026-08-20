@@ -10,7 +10,8 @@ import Foundation
 import SwiftUI
 import Observation
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 
 /// 播放器显示状态
 enum PlayerDisplayState {

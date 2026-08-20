@@ -19,9 +19,12 @@ public struct KSPlayerAppliedSessionConfiguration {
 /// Applies one resolved stream to one KSOptions instance without mutating global defaults.
 public enum KSPlayerSessionConfigurator {
     @MainActor
+    // 形参收 PlayerOptions 而不是 KSOptions：playerTypes / isLive 在上游公开版的
+    // KSOptions 上不存在，是 PlayerOptions 补出来的（见该文件说明）。三端调用处
+    // 传的本来就是 PlayerOptions。
     public static func apply(
         quality: LiveQualityDetail,
-        to options: KSOptions,
+        to options: PlayerOptions,
         fallbackUserAgent: String,
         liveReconnectPolicy: KSPlayerLiveReconnectPolicy
     ) -> KSPlayerAppliedSessionConfiguration {

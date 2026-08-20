@@ -7,7 +7,8 @@
 
 import SwiftUI
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 import Kingfisher
 internal import AVFoundation
 
@@ -120,8 +121,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     /// 这是控制方向的唯一正确方法，SwiftUI 项目也需要这个 AppDelegate 方法
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         // 返回当前支持的屏幕方向
-        if let orientation = KSOptions.supportedInterfaceOrientations {
-            return orientation
+        // 上游的 supportedInterfaceOrientations 是非可选(私有分支是可选),`.all` 即「未被收窄」
+        // ——上游自己也用 `== .all` 做这个判断。收窄过就用它，否则按设备类型给默认值,保持原行为。
+        let configured = KSOptions.supportedInterfaceOrientations
+        if configured != .all {
+            return configured
         }
 
         // 如果没有设置，根据设备类型返回默认值

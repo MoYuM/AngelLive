@@ -9,7 +9,8 @@ import Foundation
 import Observation
 import SwiftUI
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 
 /// 播放器显示状态
 enum PlayerDisplayState {
@@ -521,6 +522,15 @@ final class RoomInfoViewModel {
         }
         // 始终让 watchedPlayerLayer 指向当前活跃 layer,供协调器 sample provider 采样。
         watchedPlayerLayer = playerCoordinator.playerLayer
+        // 回调挂载晚于内核起播时(onAppear 落在 bufferFinished 之后),早期状态回调已经发完,
+        // 而直播流之后可能长时间不再变状态 —— 不补这一次对齐,isPlaying 会永远停在 false,
+        // 加载层撤不掉。只同步这几个只读快照,不走 player(layer:state:) 全流程:
+        // 那条路会重复触发 startPosition seek 与恢复状态机喂状态。
+        if let layer = playerCoordinator.playerLayer {
+            isPlaying = layer.player.isPlaying
+            userPaused = !layer.player.isPlaying
+            dynamicInfo = layer.player.dynamicInfo
+        }
     }
 
     @MainActor func togglePlayPause() {

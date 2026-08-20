@@ -12,7 +12,8 @@ import SwiftUI
 import KSPlayer
 internal import AVFoundation
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的可变静态在上游没有隔离标注,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 
 @MainActor
 public enum KSVideoPlayerViewBuilder {

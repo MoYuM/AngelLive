@@ -8,7 +8,8 @@
 
 import SwiftUI
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 import AppKit
 import Kingfisher
 #if !APPSTORE

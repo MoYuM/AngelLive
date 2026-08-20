@@ -7,7 +7,8 @@
 
 import SwiftUI
 import AngelLiveCore
-import AngelLiveDependencies
+// KSOptions 的可变静态在上游没有隔离标注,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 
 /// 播放器设置按钮（视频信息统计、弹幕设置、投屏、定时关闭、播放设置）
 struct SettingsButton: View {

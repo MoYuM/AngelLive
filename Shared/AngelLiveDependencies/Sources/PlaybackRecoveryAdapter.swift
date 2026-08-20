@@ -99,9 +99,12 @@ public extension PlaybackRecoveryHost {
         #if canImport(KSPlayer)
         guard let player = watchedPlayerLayer?.player else { return nil }
         if player is KSAVPlayer { return nil }
+        // 拿不到统计就不采样,跟 KSAVPlayer 一样豁免 —— 强行按 bytesRead=0 上报会被
+        // 状态机判成零吞吐而误触发恢复。
+        guard let dynamicInfo = player.dynamicInfo else { return nil }
         let playhead = player.currentPlaybackTime
         return PlaybackSample(
-            bytesRead: player.dynamicInfo.bytesRead,
+            bytesRead: dynamicInfo.bytesRead,
             playhead: playhead,
             buffered: max(0, player.playableTime - playhead),
             isPlaying: player.isPlaying

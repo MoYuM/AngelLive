@@ -1,5 +1,6 @@
 import SwiftUI
-import AngelLiveDependencies
+// KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+@preconcurrency import AngelLiveDependencies
 
 struct TVPlayerStatisticsPanel: View {
     @ObservedObject var playerCoordinator: KSVideoPlayer.Coordinator
@@ -137,7 +138,15 @@ struct TVPlayerStatisticsPanel: View {
 
     @ViewBuilder
     private func performanceInfoSection(playerLayer: KSPlayerLayer) -> some View {
-        let dynamicInfo = playerLayer.player.dynamicInfo
+        // AVPlayer 内核不提供 dynamicInfo(上游把它声明成可选就是为此),这段整体不显示,
+        // 好过铺一排恒为 0 的数字让人以为播放出了问题。
+        if let dynamicInfo = playerLayer.player.dynamicInfo {
+            performanceInfoSection(dynamicInfo: dynamicInfo)
+        }
+    }
+
+    @ViewBuilder
+    private func performanceInfoSection(dynamicInfo: DynamicInfo) -> some View {
         let fpsText = String(format: "%.1f fps", dynamicInfo.displayFPS)
         let droppedFrames = dynamicInfo.droppedVideoFrameCount + dynamicInfo.droppedVideoPacketCount
         let syncText = String(format: "%.3f s", dynamicInfo.audioVideoSyncDiff)

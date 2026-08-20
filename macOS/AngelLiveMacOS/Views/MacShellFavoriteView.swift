@@ -187,13 +187,13 @@ private struct MacDirectURLPlayerView: View {
     @StateObject private var playerCoordinator: KSVideoPlayer.Coordinator
     @StateObject private var playbackSession: KSPlayerPlaybackSession
     @State private var playerWindow: NSWindow?
-    private let playerOptions: KSOptions
+    private let playerOptions: PlayerOptions
 
     init(url: URL, title: String) {
         self.url = url
         self.title = title
 
-        let options = KSOptions()
+        let options = PlayerOptions()
         options.userAgent = "libmpv"
         options.registerRemoteControll = false
         options.playerTypes = url.absoluteString.lowercased().contains(".m3u8")

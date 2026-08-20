@@ -1,5 +1,12 @@
 import SwiftUI
 import UIKit
+// KSOptions.supportedInterfaceOrientations 是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
+// 必须直接标在 KSPlayer 上：本 target 直接链接了它,符号不是从 AngelLiveDependencies
+// 的 @_exported 转出来的,只标后者不生效。
+@preconcurrency import AngelLiveDependencies
+#if canImport(KSPlayer)
+@preconcurrency import KSPlayer
+#endif
 
 // MARK: - 左边缘滑动返回
 

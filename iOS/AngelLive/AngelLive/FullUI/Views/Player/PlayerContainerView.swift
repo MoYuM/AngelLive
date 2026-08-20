@@ -292,7 +292,8 @@ struct PlayerContentView: View {
                     if shouldShowLoading {
                         #if canImport(KSPlayer)
                         StreamLoadingOverlay(
-                            dynamicInfo: playerCoordinator.playerLayer?.player.dynamicInfo
+                            // 双重可选拍平:player.dynamicInfo 本身可选(AVPlayer 内核为 nil)。
+                            dynamicInfo: playerCoordinator.playerLayer?.player.dynamicInfo ?? nil
                         )
                         .accessibilityIdentifier("PlayerContentView.loadingOverlay")
                         #else
@@ -731,6 +732,7 @@ struct PlayerContentView: View {
             return
         }
 
+        // dynamicInfo 在 AVPlayer 内核为 nil;这里只用于诊断日志,取不到就记 0。
         let info = player.dynamicInfo
         let head = player.currentPlaybackTime
         let buffered = max(0, player.playableTime - head)
@@ -745,7 +747,7 @@ struct PlayerContentView: View {
                 "engineState=\(viewModel.engineState) playerState=\(player.playbackState) " +
                 "isPlaying=\(player.isPlaying) intendedPlaying=\(String(describing: wasPlayingBeforeBackground)) " +
                 "playhead=\(String(format: "%.2f", head)) buffered=\(String(format: "%.2f", buffered))s " +
-                "bytes=\(info.bytesRead) net=\(Int64(info.networkSpeed))B/s fps=\(String(format: "%.1f", Double(info.displayFPS))) " +
+                "bytes=\(info?.bytesRead ?? 0) net=\(Int64(info?.networkSpeed ?? 0))B/s fps=\(String(format: "%.1f", Double(info?.displayFPS ?? 0))) " +
                 "surface=\(surface)",
             category: .player
         )
@@ -771,14 +773,14 @@ struct PlayerContentView: View {
         let isHLS = String(describing: type(of: player)).contains("KSAVPlayer")
         let bgDuration = lastResignActiveAt.map { Date().timeIntervalSince($0) } ?? -1
         let basePlayhead = player.currentPlaybackTime
-        let baseBytes = player.dynamicInfo.bytesRead
+        let baseBytes = player.dynamicInfo?.bytesRead ?? 0
         let baseBuffered = max(0, player.playableTime - basePlayhead)
         Logger.info(
             "[PlayerFlow] FG-watch start bg=\(String(format: "%.0f", bgDuration))s " +
             "kernel=\(isHLS ? "KSAV/HLS" : "FFmpeg") state=\(viewModel.engineState) " +
             "playing=\(player.isPlaying) playhead=\(String(format: "%.2f", basePlayhead)) " +
             "buffered=\(String(format: "%.2f", baseBuffered))s " +
-            "fps=\(String(format: "%.1f", Double(player.dynamicInfo.displayFPS)))",
+            "fps=\(String(format: "%.1f", Double(player.dynamicInfo?.displayFPS ?? 0)))",
             category: .player
         )
 
@@ -788,7 +790,7 @@ struct PlayerContentView: View {
             var lastPlayhead = basePlayhead
             var lastBytes = baseBytes
             // 末样信号(取最后一次采样,避开回前台瞬间 fps 抖动);verdict 全据此判。
-            var lastFps = Double(player.dynamicInfo.displayFPS)
+            var lastFps = Double(player.dynamicInfo?.displayFPS ?? 0)
             var lastBuffered = baseBuffered
             var lastIsPlaying = player.isPlaying
             for gap in gaps {
@@ -798,15 +800,15 @@ struct PlayerContentView: View {
                 elapsed += Int(gap)
                 let info = p.dynamicInfo
                 let head = p.currentPlaybackTime
-                let bytes = info.bytesRead
-                let fps = Double(info.displayFPS)
+                let bytes = info?.bytesRead ?? 0
+                let fps = Double(info?.displayFPS ?? 0)
                 let buffered = max(0, p.playableTime - head)
                 Logger.info(
                     "[PlayerFlow] FG-watch +\(elapsed)s state=\(viewModel.engineState) " +
                     "playing=\(p.isPlaying) Δplayhead=\(String(format: "%+.2f", head - lastPlayhead))s " +
-                    "Δbytes=\(bytes - lastBytes) net=\(Int64(info.networkSpeed))B/s " +
+                    "Δbytes=\(bytes - lastBytes) net=\(Int64(info?.networkSpeed ?? 0))B/s " +
                     "fps=\(String(format: "%.1f", fps)) " +
-                    "drop=\(info.droppedVideoFrameCount + info.droppedVideoPacketCount) " +
+                    "drop=\((info?.droppedVideoFrameCount ?? 0) + (info?.droppedVideoPacketCount ?? 0)) " +
                     "buffered=\(String(format: "%.2f", buffered))s",
                     category: .player
                 )

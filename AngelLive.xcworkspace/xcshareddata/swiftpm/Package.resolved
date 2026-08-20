@@ -269,14 +269,6 @@
         "revision" : "3680f532c00d18a168bb8da7b9f8f82fcd89180d",
         "version" : "5.0.5"
       }
-    },
-    {
-      "identity" : "vlckitspm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/rursache/VLCKitSPM",
-      "state" : {
-        "revision" : "94ca521c32a9c1cd76824a34ab82e9ddb3360e65"
-      }
     }
   ],
   "version" : 2

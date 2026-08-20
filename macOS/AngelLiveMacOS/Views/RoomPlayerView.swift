@@ -247,7 +247,8 @@ private extension RoomPlayerView {
 
                 if shouldShowStreamLoading(viewModel: viewModel) {
                     MacStreamLoadingOverlay(
-                        dynamicInfo: coordinator.playerLayer?.player.dynamicInfo
+                        // player.dynamicInfo 本身可选(AVPlayer 内核为 nil),套一层 playerLayer? 会成双重可选。
+                        dynamicInfo: coordinator.playerLayer?.player.dynamicInfo ?? nil
                     )
                 }
             }

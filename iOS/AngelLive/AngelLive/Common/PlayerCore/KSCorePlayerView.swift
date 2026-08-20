@@ -12,6 +12,8 @@ import Foundation
 import SwiftUI
 import KSPlayer
 import AngelLiveCore
+// SubtitleDataSource 别名等上游差异补丁在这里。
+@preconcurrency import AngelLiveDependencies
 
 public struct KSCorePlayerView: View {
     @ObservedObject
@@ -35,9 +37,10 @@ public struct KSCorePlayerView: View {
             .onStateChanged { playerLayer, state in
                 if state == .readyToPlay {
                     if let subtitleDataSource {
-                        config.playerLayer?.subtitleModel.addSubtitle(dataSource: subtitleDataSource)
+                        // 上游把 subtitleModel 挂在 Coordinator 上(私有分支在 layer 上),参数标签也是 dataSouce。
+                        config.subtitleModel.addSubtitle(dataSouce: subtitleDataSource)
                     }
-                    if let movieTitle = playerLayer.player.dynamicInfo.metadata["title"] {
+                    if let movieTitle = playerLayer.player.dynamicInfo?.metadata["title"] {
                         title = movieTitle
                     }
                 }

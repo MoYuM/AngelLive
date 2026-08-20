@@ -177,7 +177,8 @@ open class KSOptions {
 
     public init() {}
 
-    open func updateVideo(refreshRate _: Float, isDovi _: Bool, formatDescription _: CMFormatDescription) {}
+    // formatDescription 跟上游 KSPlayer 一样收可选,两个内核下 PlayerOptions 才能共用一份 override。
+    open func updateVideo(refreshRate _: Float, isDovi _: Bool, formatDescription _: CMFormatDescription?) {}
 
     public func appendHeader(_ header: [String: String]) {
         avOptions["AVURLAssetHTTPHeaderFieldsKey"] = header
