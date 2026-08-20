@@ -16,6 +16,11 @@ private func resolveKSPlayerDependency() -> (package: Package.Dependency, target
         .appendingPathComponent("../../../KSPlayer")
         .standardizedFileURL
 
+    // 注意 SPM 会按 manifest 的【内容哈希】缓存解析结果，而这里的判断依赖文件系统状态：
+    // 本地副本刚放好、但本文件内容没变时，缓存仍会命中上一次「走远程」的结论，表现为
+    // 明明 ~/Desktop/KSPlayer 已就位、Xcode 还是去 clone。解法：
+    //     rm -rf ~/Library/Caches/org.swift.swiftpm/manifests
+    // 这是「探测式依赖」与 manifest 缓存的固有冲突，换机器/清缓存后可能再遇到。
     if FileManager.default.fileExists(atPath: localKSPlayer.appendingPathComponent("Package.swift").path) {
         // KSPlayer resolves its adjacent FFmpegKit fork itself. Declaring FFmpegKit
         // here as well creates two dependency chains with the same package identity.
