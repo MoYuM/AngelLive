@@ -41,15 +41,27 @@ final class AngelLiveUITests: XCTestCase {
         let playerContent = enterFirstDouyuRoom(app: app)
         try XCTSkipUnless(playerContent.exists, "没有进到正常播放分支(可能下播/报错),跳过返回测试")
 
-        // 控制层(含返回按钮) 5 秒无操作会自动隐藏(UnifiedPlayerControlOverlay 的 autoHideTask)，
-        // 之前两轮分别等了 6 秒/6+2 秒再找按钮，等到按钮已经淡出；这次只等 2 秒(在 5 秒窗口内)，
-        // 复现"进房间后很快点返回"这个更直接的场景，避免跟自动隐藏计时器打架。
         Thread.sleep(forTimeInterval: 2)
         attachScreenshot(named: "before_back", to: app)
         XCTAssertEqual(app.state, .runningForeground, "进播放页 2 秒后 App 已经崩溃了")
 
+        // 控制层(含返回按钮) 5 秒无操作会自动隐藏(UnifiedPlayerControlOverlay 的 autoHideTask),
+        // 而 enterFirstDouyuRoom 光是等起播就要耗掉好几秒 —— 靠"缩短等待挤进 5 秒窗口"是跟
+        // 计时器赛跑,起播快慢一变就翻车(这条测试已经为此改过两轮)。改成跟真人一样:
+        // 没看到按钮就单击播放区把控制层唤回来。已经显示时不要盲点,那一下反而会把它切掉。
         let backButton = app.buttons["UnifiedPlayerControlOverlay.backButton"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 3), "返回按钮没出现。当前可见的元素:\n\(app.debugDescription)")
+        if !backButton.waitForExistence(timeout: 3) {
+            // 这个 identifier 在视图树里有多个匹配(SwiftUI 容器套了几层),直接取会报
+            // "Multiple matching elements",要 firstMatch。
+            let playerSurface = app.otherElements
+                .matching(identifier: "DetailPlayerView.playerContent")
+                .firstMatch
+            playerSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(
+            backButton.waitForExistence(timeout: 3),
+            "唤起控制层后返回按钮仍未出现。当前可见的元素:\n\(app.debugDescription)"
+        )
 
         let douyuNavBar = app.navigationBars["斗鱼直播"]
         let wentBack = tapUntil(backButton, until: douyuNavBar)

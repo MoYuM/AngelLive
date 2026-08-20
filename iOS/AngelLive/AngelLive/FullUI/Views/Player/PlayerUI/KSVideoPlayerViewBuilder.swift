@@ -9,7 +9,9 @@
 //
 
 import SwiftUI
-import KSPlayer
+// KSOptions.supportedInterfaceOrientations 等可变静态上游没有隔离标注,
+// 直接 import 的这条路要自己降级诊断(经 AngelLiveDependencies 转出的那份管不到)。
+@preconcurrency import KSPlayer
 internal import AVFoundation
 import AngelLiveCore
 // KSOptions 的可变静态在上游没有隔离标注,Swift 6 下需降级诊断。
@@ -58,14 +60,19 @@ public enum KSVideoPlayerViewBuilder {
 
     @ViewBuilder
     static func subtitleButton(config: KSVideoPlayer.Coordinator) -> some View {
+        // 上游把 subtitleModel 挂在 Coordinator 上,选中动作也从 layer.select(subtitleInfo:)
+        // 换成了直接写 selectedSubtitleInfo;图片字幕要实时显示还得额外走一次 select(track:)。
         MenuView(selection: Binding {
-            config.playerLayer?.subtitleModel.selectedSubtitleInfo?.subtitleID
+            config.subtitleModel.selectedSubtitleInfo?.subtitleID
         } set: { value in
-            let info = config.playerLayer?.subtitleModel.subtitleInfos.first { $0.subtitleID == value }
-            config.playerLayer?.select(subtitleInfo: info)
+            let info = config.subtitleModel.subtitleInfos.first { $0.subtitleID == value }
+            config.subtitleModel.selectedSubtitleInfo = info
+            if let track = info as? MediaPlayerTrack {
+                config.playerLayer?.player.select(track: track)
+            }
         }) {
             Text("Off").tag(nil as String?)
-            ForEach(config.playerLayer?.subtitleModel.subtitleInfos ?? [], id: \.subtitleID) { track in
+            ForEach(config.subtitleModel.subtitleInfos, id: \.subtitleID) { track in
                 Text(track.name).tag(track.subtitleID as String?)
             }
         } label: {
@@ -152,17 +159,6 @@ public enum KSVideoPlayerViewBuilder {
         .ksBorderlessButton()
         .disabled(isLoading)
         .keyboardShortcut("r", modifiers: [.command])
-    }
-
-    @ViewBuilder
-    static func recordButton(config: KSVideoPlayer.Coordinator) -> some View {
-        Button {
-            config.isRecord.toggle()
-        } label: {
-            Image(systemName: config.isRecord ? "video.fill" : "video")
-                .ksMenuLabelStyle()
-        }
-        .ksBorderlessButton()
     }
 
     @ViewBuilder

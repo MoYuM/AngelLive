@@ -67,6 +67,30 @@ public extension KSPlayerLayer {
         return false
     }
 
+    /// 开始画中画。
+    ///
+    /// 私有分支把 PiP 的启停做成了 layer 上的一对方法；上游唯一的公开入口是
+    /// `isPipActive`，它的 didSet 负责驱动 `pipController.start/stop`。
+    ///
+    /// 这里可以放心地重复赋同一个值：上游那个 didSet 没有 `oldValue != newValue` 判断，
+    /// 每次赋值都会真的走一遍 start —— 这点很关键，因为 `isPipActive` 只是「意图」标志，
+    /// 用户直接点掉 PiP 小窗时上游只走 `didStopPictureInPicture`、不复位它，
+    /// 若 didSet 挑值才触发，PiP 就再也起不来了。
+    func pipStart() {
+        isPipActive = true
+    }
+
+    /// 退出画中画。
+    ///
+    /// 参数在当前配置下无实际作用：上游 `isPipActive = false` 固定走
+    /// `stop(restoreUserInterface: true)`，而 `stop` 里恢复 UI 那段被
+    /// `KSOptions.isPipPopViewController` 挡着（默认 false，本项目是纯 SwiftUI，
+    /// 不需要它去 pop/push UIViewController），传 true 传 false 都只做
+    /// `stopPictureInPicture()` + 摘 delegate。保留形参是为了调用点不动。
+    func pipStop(restoreUserInterface _: Bool) {
+        isPipActive = false
+    }
+
     /// 停止并复位到可重新起播的状态。
     ///
     /// 私有分支有 `reset()`；上游把等价语义放在 `stop()` 里（state 归 .initialized +

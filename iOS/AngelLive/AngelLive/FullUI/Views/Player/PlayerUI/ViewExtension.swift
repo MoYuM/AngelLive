@@ -9,6 +9,8 @@
 
 import SwiftUI
 import KSPlayer
+// KSOptions.subtitleDynamicRange 是 compat 层补的,不 import 拿不到。
+import AngelLiveDependencies
 
 @MainActor
 public struct PlayBackCommands: Commands {
@@ -60,7 +62,7 @@ public struct MenuView<SelectionValue, Content, Label>: View where SelectionValu
             .pickerStyle(.inline)
         } label: {
             label()
-                .menuLabelStyle()
+                .ksMenuLabelStyle()
         }
         .menuIndicator(.hidden)
         .menuStyle(.borderlessButton)

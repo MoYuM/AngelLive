@@ -221,7 +221,15 @@ struct DetailPlayerView: View {
                     // 播放器 - 始终在同一位置，只改变 frame，不会重建
                     PlayerContentView(playerCoordinator: playerCoordinator, playerModel: playerModel)
                         .id("stable_player")
-                        .accessibilityIdentifier("DetailPlayerView.playerContent")
+                        // 标记锚点必须挂在独立探针上,不能直接挂 PlayerContentView:
+                        // accessibilityIdentifier 作用于整个子树,会把控制层里每个控件
+                        // 自己的 identifier(返回/画质/全屏…)统统盖成 playerContent,
+                        // 端测就再也按 identifier 找不到它们。
+                        .background(
+                            Color.clear
+                                .accessibilityElement()
+                                .accessibilityIdentifier("DetailPlayerView.playerContent")
+                        )
                         .environment(viewModel)
                         .environment(\.isVerticalLiveMode, isVerticalLiveMode)
                         .environment(\.safeAreaInsetsCustom, safeInsets)

@@ -694,7 +694,8 @@ struct PlayerContentView: View {
             playerLayer.player.contentMode = targetContentMode
         }
 
-        let playerView = playerLayer.player.view
+        // 上游 MediaPlayerProtocol.view 是可选的(AVPlayer 内核在建好前拿不到)。
+        guard let playerView = playerLayer.player.view else { return }
         playerView.clipsToBounds = isVerticalLive
         playerView.layer.masksToBounds = isVerticalLive
         playerView.setNeedsLayout()
@@ -736,11 +737,20 @@ struct PlayerContentView: View {
         let info = player.dynamicInfo
         let head = player.currentPlaybackTime
         let buffered = max(0, player.playableTime - head)
-        var surface = "view=\(type(of: player.view)) windowAttached=\(player.view.window != nil) hidden=\(player.view.isHidden)"
-        if let metalView = player.view as? MetalPlayView,
-           let metalLayer = metalView.drawable as? CAMetalLayer {
-            surface += " metalDrawableSize=\(metalLayer.drawableSize) " +
-                "metalBounds=\(metalLayer.bounds) metalSuperlayerAttached=\(metalLayer.superlayer != nil)"
+        var surface = "view=nil"
+        if let view = player.view {
+            surface = "view=\(type(of: view)) windowAttached=\(view.window != nil) hidden=\(view.isHidden)"
+            // 上游 MetalPlayView 不再暴露 drawable:CAMetalLayer 收在私有子视图 MetalView 里,
+            // 另有一条 AVSampleBufferDisplayLayer 的路(平时走这条,metalView 是隐藏的)。
+            // 两条都记下来,才看得出「画面空白」时到底是哪一层没铺开。
+            if let metalPlayView = view as? MetalPlayView {
+                let displayLayer = metalPlayView.displayLayer
+                surface += " displayBounds=\(displayLayer.bounds) displayAttached=\(displayLayer.superlayer != nil)"
+                if let metalLayer = metalPlayView.subviews.compactMap({ $0.layer as? CAMetalLayer }).first {
+                    surface += " metalDrawableSize=\(metalLayer.drawableSize) metalBounds=\(metalLayer.bounds) " +
+                        "metalHidden=\(metalLayer.isHidden) metalAttached=\(metalLayer.superlayer != nil)"
+                }
+            }
         }
         Logger.info(
             "[PlayerFlow] lifecycle event=\(event) " +

@@ -9,6 +9,9 @@ import Foundation
 import SwiftUI
 import Observation
 import AngelLiveCore
+// PiP 控制器的 canStartPictureInPictureAutomaticallyFromInline 定义在 AVKit,
+// KSPlayer 只是转手暴露 pipController,不显式 import 拿不到这个属性。
+import AVKit
 // KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
 @preconcurrency import AngelLiveDependencies
 
@@ -773,15 +776,14 @@ final class RoomInfoViewModel {
         }
     }
 
-    /// 「自动画中画」开关切换时,同步武装/拆除 PiP 控制器。
+    /// 「自动画中画」开关切换时,把设置同步给已在跑的 PiP 控制器。
     ///
-    /// 根因:`KSComplexPlayerLayer` 只在 `readyToPlay` 且当时选项已 true 时预建 `pipController`。
-    /// 在播放中(readyToPlay 已过)才打开开关 → `pipController` 仍为 nil → 首次进后台 `pipStart()` 走
-    /// else 分支:新建控制器后**延迟 0.3s 再 start**,而此刻 App 已进后台、start 失败;控制器虽建好,
-    /// 要等第二次进后台才走即时 start 分支 →「推出进来推出进来才生效」。
+    /// 根因:KSPlayer 只在 `readyToPlay` 那一刻读一次 `options.canStartPictureInPictureAutomaticallyFromInline`
+    /// 并写给 `pipController`。播放中(readyToPlay 已过)才改设置,控制器上的开关不会跟着变
+    /// →「推出进来推出进来才生效」。这里补上那次同步。
     ///
-    /// 开:提前把控制器建好(与 readyToPlay 完全一致的 configPIP + delegate),首次进后台即即时 start。
-    /// 关:若 PiP 未在进行,拆掉控制器,避免残留武装态(防「关不掉」)。幂等。
+    /// 读 `player.pipController` 这个动作本身还有个副作用是需要的:它是惰性属性,
+    /// 首次访问才真正建控制器 —— 提前在前台建好,进后台时 `pipStart()` 才来得及生效。
     @MainActor
     func setAutoPiPArmed(_ armed: Bool) {
         #if canImport(KSPlayer)
@@ -793,16 +795,9 @@ final class RoomInfoViewModel {
             guard let playbackSurfaceID,
                   PlaybackSessionRegistry.shared.isOwner(playbackSurfaceID, of: .pictureInPicture)
             else { return }
-            guard layer.player.pipController == nil else { return }   // 已就绪,幂等
-            layer.player.configPIP()
-            // delegate 便捷属性跨模块不可见,用公开的 setValue(等价 KSPlayer 内部 `delegate = self`)。
-            layer.player.pipController?.setValue(layer, forKey: "delegate")
-            Logger.debug("[PlayerFlow] PiP controller armed (toggle on)", category: .player)
-        } else {
-            guard !layer.isPictureInPictureActive else { return }     // 正在 PiP 不拆,交给 enterForeground
-            layer.player.pipController = nil
-            Logger.debug("[PlayerFlow] PiP controller torn down (toggle off)", category: .player)
         }
+        layer.player.pipController?.canStartPictureInPictureAutomaticallyFromInline = armed
+        Logger.debug("[PlayerFlow] PiP auto-inline set to \(armed)", category: .player)
         #endif
     }
 

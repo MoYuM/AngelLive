@@ -10,7 +10,9 @@
 
 import Foundation
 import SwiftUI
-import KSPlayer
+// KSOptions.supportedInterfaceOrientations / firstPlayerType 等可变静态上游没有隔离标注,
+// 直接 import 的这条路要自己降级诊断(经 AngelLiveDependencies 转出的那份管不到)。
+@preconcurrency import KSPlayer
 internal import AVFoundation
 import AngelLiveCore
 // KSOptions 的 isAutoPlay/logLevel/firstPlayerType 等是上游没有隔离标注的可变静态,Swift 6 下需降级诊断。
@@ -40,7 +42,7 @@ struct VideoControllerView: View {
     }
 
     private var playerWidth: CGFloat {
-        model.config.playerLayer?.player.view.frame.width ?? 0
+        model.config.playerLayer?.player.view?.frame.width ?? 0
     }
 
     /// 检测是否为横屏
@@ -435,8 +437,9 @@ struct VideoControllerView: View {
                                     KSVideoPlayerViewBuilder.qualityMenuButton(viewModel: viewModel, showQualitySheet: $showQualityPanel)
 
                                     // 竖屏按钮（仅在视频为竖屏时显示）
+                                    // 上游的 CGSize.isHorizonal 是 internal,跨模块拿不到,就地展开。
                                     if let naturalSize = model.config.playerLayer?.player.naturalSize,
-                                       !naturalSize.isHorizonal {
+                                       naturalSize.height > naturalSize.width {
                                         KSVideoPlayerViewBuilder.portraitButton
                                     }
 
@@ -856,9 +859,8 @@ private extension DynamicInfo {
         log += "Dropped Frames: \(droppedVideoFrameCount)\n"
         log += "Audio Video sync: \(audioVideoSyncDiff)\n"
         log += "Network Speed: \(formatBytes(Int64(networkSpeed)))B/s\n"
-        #if DEBUG
-        log += "Average Audio Video sync: \(averageAudioVideoSyncDiff)\n"
-        #endif
+        // 上游 DynamicInfo 没有 averageAudioVideoSyncDiff(私有分支才有),
+        // 这是条 DEBUG HUD 文本,直接去掉,不值得为它自己维护一份滑动平均。
         return log
     }
 

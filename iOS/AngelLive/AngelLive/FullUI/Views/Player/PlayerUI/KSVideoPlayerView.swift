@@ -187,7 +187,8 @@ public struct KSVideoPlayerView: View {
     public func openURL(_ url: URL, options: KSOptions? = nil) {
         if url.isSubtitle {
             let info = URLSubtitleInfo(url: url)
-            model.config.playerLayer?.select(subtitleInfo: info)
+            // 上游的字幕选择挂在 Coordinator 的 subtitleModel 上,不再是 layer 的方法。
+            model.config.subtitleModel.selectedSubtitleInfo = info
         } else {
             if let options {
                 model.options = options
@@ -260,7 +261,12 @@ public extension KSVideoPlayerView {
     }
 
     init(playerLayer: KSPlayerLayer) {
-        let coordinator = KSVideoPlayer.Coordinator(playerLayer: playerLayer)
+        // 上游 Coordinator 的 init 不收参数,playerLayer 改为建好后赋值。
+        // delegate 要一并接上:Coordinator 只在 makeView 走「换 url」那条分支时才挂 delegate,
+        // 而这里传进来的 layer 已经绑好同一个 url,那条分支不会走。
+        let coordinator = KSVideoPlayer.Coordinator()
+        coordinator.playerLayer = playerLayer
+        playerLayer.delegate = coordinator
         self.init(coordinator: coordinator, url: playerLayer.url, options: playerLayer.options)
     }
 }
