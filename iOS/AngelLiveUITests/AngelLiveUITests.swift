@@ -36,6 +36,21 @@ final class AngelLiveUITests: XCTestCase {
         }
     }
 
+    func testEnterDouyinRoomStartsPlayback() throws {
+        let app = XCUIApplication()
+        let playerContent = enterFirstRoom(app: app, pluginId: "douyin", platformTitle: "抖音直播")
+        attachScreenshot(named: "douyin_entered", to: app)
+        XCTAssertTrue(playerContent.exists, "抖音房间没有进入正常播放分支（报错或判成下播）。当前可见的元素:\n\(app.debugDescription)")
+
+        Thread.sleep(forTimeInterval: 4)
+        attachScreenshot(named: "douyin_player_t4", to: app)
+        XCTAssertEqual(app.state, .runningForeground, "抖音播放开始后的几秒内 App 崩溃了")
+        // 弹幕是异步到达的实时数据，多等一会儿方便截图里能看到。
+        Thread.sleep(forTimeInterval: 12)
+        attachScreenshot(named: "douyin_player_t16", to: app)
+        XCTAssertEqual(app.state, .runningForeground, "抖音播放十几秒后 App 崩溃了")
+    }
+
     func testGoBackFromRoomDoesNotCrash() throws {
         let app = XCUIApplication()
         let playerContent = enterFirstDouyuRoom(app: app)
@@ -79,11 +94,20 @@ final class AngelLiveUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "返回房间列表后几秒内 App 崩溃了")
     }
 
-    /// 走完整链路：装插件源 → 进斗鱼分类 → 点第一个房间 → 到达播放页三态之一。
-    /// 返回 playerContent 元素，调用方通过 `.exists` 判断是否真的进了正常播放分支。
+    /// 插件源地址：默认线上源；本地调试可用 UITEST_PLUGIN_SOURCE 环境变量覆盖（如 http://127.0.0.1:8765/plugins.json）。
+    private var pluginSourceURL: String {
+        ProcessInfo.processInfo.environment["UITEST_PLUGIN_SOURCE"]
+            ?? "https://ghfast.top/https://raw.githubusercontent.com/MoYuM/angellive-plugins/main/plugins.json"
+    }
+
     private func enterFirstDouyuRoom(app: XCUIApplication) -> XCUIElement {
-        app.launchEnvironment["UITEST_DEEPLINK_INSTALL_SOURCE"] =
-            "https://ghfast.top/https://raw.githubusercontent.com/MoYuM/angellive-plugins/main/plugins.json"
+        enterFirstRoom(app: app, pluginId: "douyu", platformTitle: "斗鱼直播")
+    }
+
+    /// 走完整链路：装插件源 → 进指定平台分类 → 点第一个房间 → 到达播放页三态之一。
+    /// 返回 playerContent 元素，调用方通过 `.exists` 判断是否真的进了正常播放分支。
+    private func enterFirstRoom(app: XCUIApplication, pluginId: String, platformTitle: String) -> XCUIElement {
+        app.launchEnvironment["UITEST_DEEPLINK_INSTALL_SOURCE"] = pluginSourceURL
         app.launch()
 
         dismissWelcomeIfPresent(app)
@@ -92,16 +116,22 @@ final class AngelLiveUITests: XCTestCase {
         XCTAssertTrue(platformsTab.waitForExistence(timeout: 10), "找不到「配置」tab")
         platformsTab.tap()
 
-        // 插件源安装是异步网络流程（拉索引 + 下载 zip + 解压 + 校验），给足超时。
-        let douyuCard = app.buttons["PlatformCard.douyu"]
-        XCTAssertTrue(douyuCard.waitForExistence(timeout: 60), "斗鱼插件在 60s 内没有安装完成/出现在平台网格里")
+        // 源里含带登录能力的插件时，宿主会先弹凭证风险确认框，点「继续安装」才会真正下载。
+        let consentButton = app.alerts.buttons["继续安装"]
+        if consentButton.waitForExistence(timeout: 15) {
+            consentButton.tap()
+        }
 
-        let douyuNavBar = app.navigationBars["斗鱼直播"]
-        let navigated = tapUntil(douyuCard, until: douyuNavBar)
-        XCTAssertTrue(navigated, "点击斗鱼卡片多次重试后仍未跳转到平台详情页。当前可见的元素:\n\(app.debugDescription)")
+        // 插件源安装是异步网络流程（拉索引 + 下载 zip + 解压 + 校验），给足超时。
+        let platformCard = app.buttons["PlatformCard.\(pluginId)"]
+        XCTAssertTrue(platformCard.waitForExistence(timeout: 60), "\(platformTitle)插件在 60s 内没有安装完成/出现在平台网格里")
+
+        let platformNavBar = app.navigationBars[platformTitle]
+        let navigated = tapUntil(platformCard, until: platformNavBar)
+        XCTAssertTrue(navigated, "点击\(platformTitle)卡片多次重试后仍未跳转到平台详情页。当前可见的元素:\n\(app.debugDescription)")
 
         let firstRoomCell = app.collectionViews.cells["RoomCell_0"]
-        XCTAssertTrue(firstRoomCell.waitForExistence(timeout: 90), "斗鱼房间列表在 90s 内没有加载出任何房间。当前可见的元素:\n\(app.debugDescription)")
+        XCTAssertTrue(firstRoomCell.waitForExistence(timeout: 90), "\(platformTitle)房间列表在 90s 内没有加载出任何房间。当前可见的元素:\n\(app.debugDescription)")
 
         let playerContent = app.otherElements["DetailPlayerView.playerContent"]
         let errorView = app.otherElements["DetailPlayerView.errorView"]
