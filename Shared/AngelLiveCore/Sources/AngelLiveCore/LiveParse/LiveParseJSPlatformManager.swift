@@ -406,7 +406,7 @@ public enum LiveParseJSPlatformManager {
         return nil
     }
 
-    private static func normalizeLiveState(_ raw: String) -> LiveState {
+    static func normalizeLiveState(_ raw: String) -> LiveState {
         let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         if ["1", "live", "on", "true", "yes", "streaming", "playing"].contains(normalized) {
@@ -640,7 +640,7 @@ public enum LiveParseJSPlatformManager {
     }
 }
 
-private struct PluginRoomDTO: Decodable {
+struct PluginRoomDTO: Decodable {
     let userName: String
     let roomTitle: String
     let roomCover: String
@@ -681,7 +681,9 @@ private struct PluginRoomDTO: Decodable {
             roomCover: roomCover,
             userHeadImg: userHeadImg,
             liveType: liveType,
-            liveState: liveState,
+            // 插件返回的 liveState 格式并不统一（数值 rawValue 或 "live"/"close" 等语义字符串），
+            // 归一化到宿主 rawValue，否则收藏页 `LiveState(rawValue:)` 解析失败会被判成"未知状态"。
+            liveState: liveState.map { LiveParseJSPlatformManager.normalizeLiveState($0).rawValue },
             userId: userId,
             roomId: roomId,
             liveWatchedCount: liveWatchedCount
