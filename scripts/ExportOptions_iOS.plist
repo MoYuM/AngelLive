@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>57WZ39XQY3</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>iPhone Distribution</string>
+	<!--
+	    按 **UUID** 锁定描述文件,不要写 Name。
+	    本机同名 "AngelLive AppStore" 存在多份、内容不同(有的没有 iCloud 能力),
+	    按 Name 匹配选中哪一份是不确定的。而 archive 是关签名做的
+	    (CODE_SIGNING_ALLOWED=NO),二进制最终 claim 的 entitlements **完全**由这里
+	    指定的描述文件决定 —— 选错就产出一个没有 iCloud entitlement 的包,
+	    它能通过 Apple 的全部校验、装到设备上,然后在 CKContainer 初始化时启动即崩。
+	    e7d5d613 = 2026-08-20 18:57 重签的那份,含 iCloud 容器 + aps-environment。
+	    换描述文件后务必跑 scripts/verify_signed_entitlements.sh 复核。
+	-->
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.moyum.angellive</key>
+		<string>e7d5d613-8fb2-4ca7-b4cd-7f74a2bec93a</string>
+	</dict>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>
